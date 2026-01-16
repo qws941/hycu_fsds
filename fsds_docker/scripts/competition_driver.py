@@ -81,6 +81,10 @@ class CompetitionDriver:
         self.last_valid_time = rospy.Time.now()
         self.last_valid_centerline = []
         self.last_valid_track_width = 4.0
+        self.track_width_min = 2.0
+        self.track_width_max = 6.0
+        self.curvature_history = []
+        self.curvature_smooth_window = 5
         self.last_lidar_time = rospy.Time.now()
         self.last_odom_time = rospy.Time.now()
         
@@ -247,12 +251,12 @@ class CompetitionDriver:
     
     def estimate_curvature(self, centerline):
         if len(centerline) < 3:
-            return 0.0
+            return self.get_smoothed_curvature(0.0)
         
         points = np.array([[c['x'], c['y']] for c in centerline[:5]])
         
         if len(points) < 3:
-            return 0.0
+            return self.get_smoothed_curvature(0.0)
         
         dx = np.gradient(points[:, 0])
         dy = np.gradient(points[:, 1])
@@ -260,7 +264,14 @@ class CompetitionDriver:
         ddy = np.gradient(dy)
         
         curvature = np.abs(dx * ddy - dy * ddx) / (dx**2 + dy**2 + 1e-6)**1.5
-        return np.mean(curvature)
+        raw_curvature = np.mean(curvature)
+        return self.get_smoothed_curvature(raw_curvature)
+    
+    def get_smoothed_curvature(self, new_curvature):
+        self.curvature_history.append(new_curvature)
+        if len(self.curvature_history) > self.curvature_smooth_window:
+            self.curvature_history.pop(0)
+        return np.mean(self.curvature_history)
     
     def calculate_target_speed(self, curvature):
         k = 2.0
@@ -323,7 +334,8 @@ class CompetitionDriver:
             if left_cones and right_cones:
                 left_y = np.mean([c['y'] for c in left_cones[:3]])
                 right_y = np.mean([c['y'] for c in right_cones[:3]])
-                self.last_valid_track_width = abs(left_y - right_y)
+                raw_width = abs(left_y - right_y)
+                self.last_valid_track_width = np.clip(raw_width, self.track_width_min, self.track_width_max)
         else:
             elapsed = (now - self.last_valid_time).to_sec()
             
