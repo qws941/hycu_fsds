@@ -13,9 +13,11 @@ class SimpleSLAM:
     def __init__(self):
         rospy.init_node('simple_slam')
         
-        self.map_resolution = 0.1
-        self.map_size = 200
+        self.map_resolution = rospy.get_param('~map_resolution', 0.1)
+        self.map_size = rospy.get_param('~map_size', 200)
         self.map_origin = -self.map_size * self.map_resolution / 2
+        self.decay_rate = rospy.get_param('~decay_rate', 2)
+        self.decay_interval = rospy.get_param('~decay_interval', 1.0)
         
         self.occupancy_grid = np.zeros((self.map_size, self.map_size), dtype=np.int8)
         self.cone_map = []
@@ -26,6 +28,7 @@ class SimpleSLAM:
         
         self.path_history = []
         self.max_path_length = 500
+        self.last_decay_time = rospy.Time.now()
         
         self.map_pub = rospy.Publisher('/slam/map', OccupancyGrid, queue_size=1)
         self.path_pub = rospy.Publisher('/slam/path', Path, queue_size=1)
@@ -105,10 +108,17 @@ class SimpleSLAM:
         msg.pose.orientation = Quaternion(*q)
         self.pose_pub.publish(msg)
     
+    def apply_decay(self):
+        now = rospy.Time.now()
+        if (now - self.last_decay_time).to_sec() >= self.decay_interval:
+            self.occupancy_grid = np.maximum(0, self.occupancy_grid - self.decay_rate)
+            self.last_decay_time = now
+    
     def run(self):
         rate = rospy.Rate(5)
         
         while not rospy.is_shutdown():
+            self.apply_decay()
             self.publish_map()
             self.publish_path()
             self.publish_pose()

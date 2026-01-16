@@ -279,9 +279,8 @@ class CompetitionDriver:
         return np.mean(self.curvature_history)
     
     def calculate_target_speed(self, curvature):
-        k = 2.0
-        eps = 0.01
-        speed = k / (abs(curvature) + eps)
+        max_lateral_accel = rospy.get_param('~max_lateral_accel', 4.0)
+        speed = np.sqrt(max_lateral_accel / (abs(curvature) + 0.01))
         speed = np.clip(speed, self.min_speed, self.max_speed)
         
         speed = min(speed, self.v2x_speed_limit)
@@ -432,6 +431,13 @@ class CompetitionDriver:
         if self.state == DriveState.DEGRADED:
             centerline = self.last_valid_centerline
             self.current_target_speed = self.min_speed
+            speed_error = self.current_speed - self.current_target_speed
+            if speed_error > 0.5:
+                cmd.brake = min(0.3, speed_error * 0.2)
+                cmd.throttle = 0.0
+                cmd.steering = self.pure_pursuit_steering(self.get_lookahead_point(centerline))
+                self.current_steering = cmd.steering
+                return cmd
         else:
             centerline = self.centerline
             self.current_curvature = self.estimate_curvature(centerline)
