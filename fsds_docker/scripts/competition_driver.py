@@ -169,20 +169,29 @@ class CompetitionDriver:
         cones = []
         visited_cells = set()
         
-        for cell_key, indices in grid.items():
+        for cell_key in grid.keys():
             if cell_key in visited_cells:
                 continue
             
-            cluster_indices = list(indices)
-            visited_cells.add(cell_key)
+            cluster_indices = []
+            queue = [cell_key]
             
-            gx, gy = cell_key
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    neighbor = (gx + dx, gy + dy)
-                    if neighbor in grid and neighbor not in visited_cells:
-                        cluster_indices.extend(grid[neighbor])
-                        visited_cells.add(neighbor)
+            while queue:
+                current = queue.pop(0)
+                if current in visited_cells:
+                    continue
+                if current not in grid:
+                    continue
+                    
+                visited_cells.add(current)
+                cluster_indices.extend(grid[current])
+                
+                gx, gy = current
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        neighbor = (gx + dx, gy + dy)
+                        if neighbor in grid and neighbor not in visited_cells:
+                            queue.append(neighbor)
             
             if len(cluster_indices) < self.cone_min_points:
                 continue
@@ -241,7 +250,19 @@ class CompetitionDriver:
             for c in right_cones[:5]:
                 centerline.append({'x': c['x'], 'y': c['y'] + self.last_valid_track_width / 2})
         
-        return sorted(centerline, key=lambda c: c['x'])
+        centerline = sorted(centerline, key=lambda c: c['x'])
+        
+        if len(centerline) >= 3:
+            smoothed = []
+            window = 3
+            for i in range(len(centerline)):
+                start = max(0, i - window // 2)
+                end = min(len(centerline), i + window // 2 + 1)
+                avg_y = np.mean([c['y'] for c in centerline[start:end]])
+                smoothed.append({'x': centerline[i]['x'], 'y': avg_y})
+            return smoothed
+        
+        return centerline
     
     def get_lookahead_point(self, centerline):
         if not centerline:
