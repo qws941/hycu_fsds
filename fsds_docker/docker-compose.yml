@@ -1,0 +1,112 @@
+# ===========================================
+# FSDS Docker Compose Configuration
+# Formula Student Driverless Simulator
+# ===========================================
+version: '3.8'
+
+services:
+  # ===========================================
+  # ROS Master Node
+  # ===========================================
+  roscore:
+    image: ros:noetic-ros-base-focal
+    container_name: fsds_roscore
+    command: roscore
+    networks:
+      - fsds_network
+    environment:
+      - ROS_MASTER_URI=http://roscore:11311
+    restart: unless-stopped
+
+  # ===========================================
+  # FSDS ROS Bridge
+  # Connects to Windows FSDS Simulator
+  # ===========================================
+  fsds_bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fsds_bridge
+    depends_on:
+      - roscore
+    networks:
+      - fsds_network
+    environment:
+      - ROS_MASTER_URI=http://roscore:11311
+      - ROS_HOSTNAME=fsds_bridge
+      - DISPLAY=${DISPLAY:-:0}
+      # Windows Host IP (update this!)
+      - FSDS_HOST_IP=${FSDS_HOST_IP:-host.docker.internal}
+    volumes:
+      # Mount custom scripts
+      - ./scripts:/root/catkin_ws/src/fsds_scripts/scripts:rw
+      # X11 for GUI (Linux)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Shared data
+      - ./data:/root/data:rw
+    command: >
+      bash -c "
+        source /opt/ros/noetic/setup.bash &&
+        source /root/Formula-Student-Driverless-Simulator/ros/devel/setup.bash &&
+        roslaunch fsds_ros_bridge fsds_ros_bridge.launch host:=$${FSDS_HOST_IP} port:=41451
+      "
+    restart: unless-stopped
+
+  # ===========================================
+  # Development Container
+  # For running custom autonomous scripts
+  # ===========================================
+  fsds_dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fsds_dev
+    depends_on:
+      - roscore
+      - fsds_bridge
+    networks:
+      - fsds_network
+    environment:
+      - ROS_MASTER_URI=http://roscore:11311
+      - ROS_HOSTNAME=fsds_dev
+      - DISPLAY=${DISPLAY:-:0}
+    volumes:
+      # Mount custom scripts (editable)
+      - ./scripts:/root/catkin_ws/src/fsds_scripts/scripts:rw
+      # X11 for RViz
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Shared data
+      - ./data:/root/data:rw
+    stdin_open: true
+    tty: true
+    command: bash
+
+  # ===========================================
+  # RViz Visualization (Optional)
+  # ===========================================
+  rviz:
+    image: ros:noetic-ros-base-focal
+    container_name: fsds_rviz
+    depends_on:
+      - roscore
+    networks:
+      - fsds_network
+    environment:
+      - ROS_MASTER_URI=http://roscore:11311
+      - ROS_HOSTNAME=rviz
+      - DISPLAY=${DISPLAY:-:0}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./rviz:/root/.rviz:rw
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y ros-noetic-rviz &&
+        source /opt/ros/noetic/setup.bash &&
+        rviz
+      "
+    profiles:
+      - viz
+
+networks:
+  fsds_network:
+    driver: bridge
