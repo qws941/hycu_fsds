@@ -10,6 +10,42 @@ fi
 
 source .env
 
+check_fsds_host() {
+    if [ "$FSDS_HOST_IP" = "host.docker.internal" ]; then
+        echo "   Using Docker internal networking"
+        return 0
+    fi
+    
+    echo "   Checking FSDS host connectivity: $FSDS_HOST_IP:41451"
+    
+    if ! command -v nc &> /dev/null; then
+        if ! timeout 3 bash -c "echo >/dev/tcp/$FSDS_HOST_IP/41451" 2>/dev/null; then
+            echo "Error: Cannot connect to FSDS simulator at $FSDS_HOST_IP:41451"
+            echo "Please ensure:"
+            echo "  1. Windows FSDS simulator is running"
+            echo "  2. FSDS_HOST_IP in .env is correct (current: $FSDS_HOST_IP)"
+            echo "  3. Firewall allows port 41451"
+            return 1
+        fi
+    else
+        if ! nc -z -w 3 "$FSDS_HOST_IP" 41451 2>/dev/null; then
+            echo "Error: Cannot connect to FSDS simulator at $FSDS_HOST_IP:41451"
+            echo "Please ensure:"
+            echo "  1. Windows FSDS simulator is running"
+            echo "  2. FSDS_HOST_IP in .env is correct (current: $FSDS_HOST_IP)"
+            echo "  3. Firewall allows port 41451"
+            return 1
+        fi
+    fi
+    
+    echo "   FSDS host reachable"
+    return 0
+}
+
+if ! check_fsds_host; then
+    exit 1
+fi
+
 echo "1. Docker 이미지 빌드..."
 docker-compose build
 

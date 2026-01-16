@@ -37,6 +37,10 @@ RUN apt-get update && apt-get install -y \
     ros-noetic-image-transport \
     ros-noetic-rviz \
     ros-noetic-rqt* \
+    ros-noetic-tf \
+    ros-noetic-tf2-ros \
+    ros-noetic-laser-geometry \
+    ros-noetic-pcl-ros \
     # FSDS dependencies
     libyaml-cpp-dev \
     libcurl4-openssl-dev \
@@ -88,7 +92,7 @@ WORKDIR /root/catkin_ws
 # ===========================================
 RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc && \
     echo "source /root/Formula-Student-Driverless-Simulator/ros/devel/setup.bash" >> ~/.bashrc && \
-    echo "export ROS_MASTER_URI=http://localhost:11311" >> ~/.bashrc
+    echo "export ROS_MASTER_URI=\${ROS_MASTER_URI:-http://localhost:11311}" >> ~/.bashrc
 
 # Entry point
 COPY entrypoint.sh /entrypoint.sh
