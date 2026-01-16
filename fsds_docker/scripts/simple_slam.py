@@ -43,34 +43,40 @@ class SimpleSLAM:
         rospy.loginfo("Simple SLAM initialized")
     
     def odom_callback(self, msg):
-        self.robot_x = msg.pose.pose.position.x
-        self.robot_y = msg.pose.pose.position.y
-        
-        q = msg.pose.pose.orientation
-        _, _, self.robot_yaw = tft.euler_from_quaternion([q.x, q.y, q.z, q.w])
-        
-        self.path_history.append((self.robot_x, self.robot_y))
-        if len(self.path_history) > self.max_path_length:
-            self.path_history.pop(0)
+        try:
+            self.robot_x = msg.pose.pose.position.x
+            self.robot_y = msg.pose.pose.position.y
+            
+            q = msg.pose.pose.orientation
+            _, _, self.robot_yaw = tft.euler_from_quaternion([q.x, q.y, q.z, q.w])
+            
+            self.path_history.append((self.robot_x, self.robot_y))
+            if len(self.path_history) > self.max_path_length:
+                self.path_history.pop(0)
+        except Exception as e:
+            rospy.logwarn_throttle(1.0, f"Odom callback error: {e}")
     
     def lidar_callback(self, msg):
-        points = np.array(list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)))
-        
-        if len(points) == 0:
-            return
-        
-        z_mask = (points[:, 2] > -0.3) & (points[:, 2] < 0.5)
-        filtered = points[z_mask]
-        
-        for p in filtered[::10]:
-            world_x = self.robot_x + p[0] * cos(self.robot_yaw) - p[1] * sin(self.robot_yaw)
-            world_y = self.robot_y + p[0] * sin(self.robot_yaw) + p[1] * cos(self.robot_yaw)
+        try:
+            points = np.array(list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)))
             
-            grid_x = int((world_x - self.map_origin) / self.map_resolution)
-            grid_y = int((world_y - self.map_origin) / self.map_resolution)
+            if len(points) == 0:
+                return
             
-            if 0 <= grid_x < self.map_size and 0 <= grid_y < self.map_size:
-                self.occupancy_grid[grid_y, grid_x] = min(100, self.occupancy_grid[grid_y, grid_x] + 10)
+            z_mask = (points[:, 2] > -0.3) & (points[:, 2] < 0.5)
+            filtered = points[z_mask]
+            
+            for p in filtered[::10]:
+                world_x = self.robot_x + p[0] * cos(self.robot_yaw) - p[1] * sin(self.robot_yaw)
+                world_y = self.robot_y + p[0] * sin(self.robot_yaw) + p[1] * cos(self.robot_yaw)
+                
+                grid_x = int((world_x - self.map_origin) / self.map_resolution)
+                grid_y = int((world_y - self.map_origin) / self.map_resolution)
+                
+                if 0 <= grid_x < self.map_size and 0 <= grid_y < self.map_size:
+                    self.occupancy_grid[grid_y, grid_x] = min(100, self.occupancy_grid[grid_y, grid_x] + 10)
+        except Exception as e:
+            rospy.logwarn_throttle(1.0, f"Lidar callback error: {e}")
     
     def publish_map(self):
         msg = OccupancyGrid()
