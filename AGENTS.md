@@ -13,17 +13,20 @@ Docker-based ROS Noetic environment for Formula Student Driverless Simulator (FS
 ```
 fsds_docker/
 ├── Dockerfile           # ROS Noetic + FSDS build
-├── docker-compose.yml   # 4 services: roscore, bridge, dev, rviz
+├── docker-compose.yml   # 5 services: roscore, bridge, dev, rviz, rosbridge
 ├── .env                 # FSDS_HOST_IP (Windows IP)
 ├── start.sh             # One-click launcher
 ├── preflight_check.sh   # Demo rehearsal script
+├── dashboard.html       # Web UI dashboard
 └── scripts/
     ├── basic_driver.py      # LiDAR obstacle stop
     ├── autonomous_driver.py # Cone detection + steering
     ├── advanced_driver.py   # PID + centerline following
     ├── competition_driver.py # Pure Pursuit + curvature speed (MAIN)
     ├── simple_slam.py       # Occupancy grid SLAM
-    └── v2x_rsu.py           # V2X Virtual RSU (bonus points)
+    ├── v2x_rsu.py           # V2X Virtual RSU (bonus points)
+    ├── lap_timer.py         # Lap time measurement
+    └── cone_classifier.py   # Cone color classification
 ```
 
 ## WHERE TO LOOK

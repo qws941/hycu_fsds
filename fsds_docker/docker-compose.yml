@@ -120,6 +120,30 @@ services:
     profiles:
       - viz
 
+  # ===========================================
+  # ROS Bridge WebSocket (For Dashboard)
+  # ===========================================
+  rosbridge:
+    image: ros:noetic-ros-base-focal
+    container_name: fsds_rosbridge
+    depends_on:
+      - roscore
+    networks:
+      - fsds_network
+    ports:
+      - "9090:9090"
+    environment:
+      - ROS_MASTER_URI=http://roscore:11311
+      - ROS_HOSTNAME=rosbridge
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y ros-noetic-rosbridge-server &&
+        source /opt/ros/noetic/setup.bash &&
+        roslaunch rosbridge_server rosbridge_websocket.launch
+      "
+    profiles:
+      - dashboard
+
 networks:
   fsds_network:
     driver: bridge
