@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y \
     ros-noetic-tf2-ros \
     ros-noetic-laser-geometry \
     ros-noetic-pcl-ros \
+    ros-noetic-rosbridge-server \
     # FSDS dependencies
     libyaml-cpp-dev \
     libcurl4-openssl-dev \
@@ -54,21 +55,24 @@ RUN apt-get update && apt-get install -y \
 # Python Dependencies
 # ===========================================
 RUN pip3 install --no-cache-dir \
-    numpy \
-    scipy \
-    matplotlib \
-    opencv-python \
-    msgpack-rpc-python \
-    airsim
+    numpy==1.24.3 \
+    scipy==1.10.1 \
+    matplotlib==3.7.2 \
+    opencv-python==4.8.0.74 \
+    msgpack-rpc-python==0.4.1 \
+    airsim==1.8.1
 
 # ===========================================
 # ROS Workspace Setup
 # ===========================================
 WORKDIR /root
 
-# Clone FSDS Repository
+# Clone FSDS Repository (pinned to known-good commit)
 RUN git clone https://github.com/FS-Driverless/Formula-Student-Driverless-Simulator.git \
-    --recurse-submodules --depth 1
+    --recurse-submodules --depth 1 && \
+    cd Formula-Student-Driverless-Simulator && \
+    git fetch --depth 1 origin e8a92d8 && \
+    git checkout e8a92d8
 
 # Build AirLib
 WORKDIR /root/Formula-Student-Driverless-Simulator/AirSim

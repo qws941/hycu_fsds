@@ -98,7 +98,9 @@ services:
   # RViz Visualization (Optional)
   # ===========================================
   rviz:
-    image: ros:noetic-ros-base-focal
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: fsds_rviz
     depends_on:
       - roscore
@@ -113,7 +115,6 @@ services:
       - ./rviz:/root/.rviz:rw
     command: >
       bash -c "
-        apt-get update && apt-get install -y ros-noetic-rviz &&
         source /opt/ros/noetic/setup.bash &&
         rviz
       "
@@ -124,7 +125,9 @@ services:
   # ROS Bridge WebSocket (For Dashboard)
   # ===========================================
   rosbridge:
-    image: ros:noetic-ros-base-focal
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: fsds_rosbridge
     depends_on:
       - roscore
@@ -137,7 +140,6 @@ services:
       - ROS_HOSTNAME=rosbridge
     command: >
       bash -c "
-        apt-get update && apt-get install -y ros-noetic-rosbridge-server &&
         source /opt/ros/noetic/setup.bash &&
         roslaunch rosbridge_server rosbridge_websocket.launch
       "

@@ -29,26 +29,30 @@ class CompetitionDriver:
     def __init__(self):
         rospy.init_node('competition_driver')
         
-        self.max_throttle = 0.25
-        self.min_speed = 2.0
-        self.max_speed = 6.0
-        self.max_steering = 0.4
-        self.wheelbase = 1.5
-        self.lookahead_base = 4.0
-        self.lookahead_speed_gain = 0.5
+        # ROS Parameters (tunable via rosparam set)
+        self.max_throttle = rospy.get_param('~max_throttle', 0.25)
+        self.min_speed = rospy.get_param('~min_speed', 2.0)
+        self.max_speed = rospy.get_param('~max_speed', 6.0)
+        self.max_steering = rospy.get_param('~max_steering', 0.4)
+        self.wheelbase = rospy.get_param('~wheelbase', 1.5)
+        self.lookahead_base = rospy.get_param('~lookahead_base', 4.0)
+        self.lookahead_speed_gain = rospy.get_param('~lookahead_speed_gain', 0.5)
         
-        self.cones_range_cutoff = 12.0
-        self.cone_min_z = -0.3
-        self.cone_max_z = 0.5
-        self.cone_grouping_threshold = 0.2
-        self.cone_min_points = 3
-        self.cone_max_radius = 0.3
-        self.cone_max_radius_std = 0.15
+        # Cone detection parameters
+        self.cones_range_cutoff = rospy.get_param('~cones_range_cutoff', 12.0)
+        self.cone_min_z = rospy.get_param('~cone_min_z', -0.3)
+        self.cone_max_z = rospy.get_param('~cone_max_z', 0.5)
+        self.cone_grouping_threshold = rospy.get_param('~cone_grouping_threshold', 0.2)
+        self.cone_min_points = rospy.get_param('~cone_min_points', 3)
+        self.cone_max_radius = rospy.get_param('~cone_max_radius', 0.3)
+        self.cone_max_radius_std = rospy.get_param('~cone_max_radius_std', 0.15)
         
-        self.degraded_timeout = 1.0
-        self.stopping_timeout = 3.0
-        self.lidar_stale_timeout = 0.5
-        self.odom_stale_timeout = 0.5
+        # Timeout parameters (relaxed for stability)
+        self.degraded_timeout = rospy.get_param('~degraded_timeout', 1.0)
+        self.stopping_timeout = rospy.get_param('~stopping_timeout', 3.0)
+        self.lidar_stale_timeout = rospy.get_param('~lidar_stale_timeout', 1.0)  # Relaxed from 0.5
+        self.odom_stale_timeout = rospy.get_param('~odom_stale_timeout', 1.0)    # Relaxed from 0.5
+        self.recovery_timeout = rospy.get_param('~recovery_timeout', 1.0)        # New: time to recover from STOPPING
         
         self.cmd_pub = rospy.Publisher('/fsds/control_command', ControlCommand, queue_size=1)
         rospy.Subscriber('/fsds/lidar/Lidar1', PointCloud2, self.lidar_callback)
@@ -87,6 +91,7 @@ class CompetitionDriver:
         self.curvature_smooth_window = 5
         self.last_lidar_time = rospy.Time.now()
         self.last_odom_time = rospy.Time.now()
+        self.recovery_start_time = None
         
         self.v2x_speed_limit = self.max_speed
         self.v2x_hazard = False
@@ -297,11 +302,13 @@ class CompetitionDriver:
         if self.e_stop:
             self.state = DriveState.STOPPING
             self.stop_reason = StopReason.EMERGENCY_STOP
+            self.recovery_start_time = None
             return
         
         if self.v2x_stop_zone:
             self.state = DriveState.STOPPING
             self.stop_reason = StopReason.V2X_STOP_ZONE
+            self.recovery_start_time = None
             return
         
         lidar_elapsed = (now - self.last_lidar_time).to_sec()
@@ -310,6 +317,7 @@ class CompetitionDriver:
                 self.add_commentary(f"WATCHDOG: LiDAR stale ({lidar_elapsed:.1f}s)")
             self.state = DriveState.STOPPING
             self.stop_reason = StopReason.LIDAR_STALE
+            self.recovery_start_time = None
             return
         
         odom_elapsed = (now - self.last_odom_time).to_sec()
@@ -318,17 +326,36 @@ class CompetitionDriver:
                 self.add_commentary(f"WATCHDOG: Odometry stale ({odom_elapsed:.1f}s)")
             self.state = DriveState.STOPPING
             self.stop_reason = StopReason.ODOM_STALE
+            self.recovery_start_time = None
             return
+        
+        if self.state == DriveState.STOPPING and self.stop_reason in [StopReason.LIDAR_STALE, StopReason.ODOM_STALE, StopReason.CONES_LOST]:
+            if self.recovery_start_time is None:
+                self.recovery_start_time = now
+            elif (now - self.recovery_start_time).to_sec() >= self.recovery_timeout:
+                self.add_commentary("WATCHDOG: Sensors recovered, attempting resume")
+                self.state = DriveState.DEGRADED
+                self.stop_reason = StopReason.NONE
+                self.recovery_start_time = None
     
     def update_state(self, left_cones, right_cones):
         now = rospy.Time.now()
-        has_valid_cones = len(left_cones) >= 1 and len(right_cones) >= 1
+        has_valid_cones = len(left_cones) >= 1 or len(right_cones) >= 1
+        has_both_sides = len(left_cones) >= 1 and len(right_cones) >= 1
         
         if has_valid_cones:
-            if self.state != DriveState.TRACKING:
+            if self.state == DriveState.STOPPING and self.stop_reason == StopReason.CONES_LOST:
+                self.add_commentary("Cones recovered, resuming DEGRADED")
+                self.state = DriveState.DEGRADED
+                self.stop_reason = StopReason.NONE
+            elif self.state != DriveState.TRACKING and has_both_sides:
                 self.add_commentary("Cones recovered, resuming TRACKING")
-            self.state = DriveState.TRACKING
-            self.stop_reason = StopReason.NONE
+                self.state = DriveState.TRACKING
+                self.stop_reason = StopReason.NONE
+            elif has_both_sides:
+                self.state = DriveState.TRACKING
+                self.stop_reason = StopReason.NONE
+            
             self.last_valid_time = now
             
             if left_cones and right_cones:
@@ -337,6 +364,9 @@ class CompetitionDriver:
                 raw_width = abs(left_y - right_y)
                 self.last_valid_track_width = np.clip(raw_width, self.track_width_min, self.track_width_max)
         else:
+            if self.state == DriveState.STOPPING:
+                return
+            
             elapsed = (now - self.last_valid_time).to_sec()
             
             if elapsed > self.stopping_timeout:
@@ -350,21 +380,34 @@ class CompetitionDriver:
                 self.state = DriveState.DEGRADED
     
     def lidar_callback(self, msg):
-        self.last_lidar_time = rospy.Time.now()
-        self.lidar_received = True
-        points = np.array(list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)))
-        self.left_cones, self.right_cones = self.find_cones_filtered(points)
-        self.centerline = self.build_centerline(self.left_cones, self.right_cones)
-        
-        if self.centerline:
-            self.last_valid_centerline = self.centerline
+        try:
+            self.last_lidar_time = rospy.Time.now()
+            self.lidar_received = True
+            points = np.array(list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)))
+            
+            if len(points) == 0:
+                return
+            
+            if np.any(np.isnan(points)) or np.any(np.isinf(points)):
+                points = points[~np.isnan(points).any(axis=1) & ~np.isinf(points).any(axis=1)]
+            
+            self.left_cones, self.right_cones = self.find_cones_filtered(points)
+            self.centerline = self.build_centerline(self.left_cones, self.right_cones)
+            
+            if self.centerline:
+                self.last_valid_centerline = self.centerline
+        except Exception as e:
+            rospy.logwarn_throttle(1.0, f"LiDAR callback error: {e}")
     
     def odom_callback(self, msg):
-        self.last_odom_time = rospy.Time.now()
-        self.odom_received = True
-        vx = msg.twist.twist.linear.x
-        vy = msg.twist.twist.linear.y
-        self.current_speed = sqrt(vx**2 + vy**2)
+        try:
+            self.last_odom_time = rospy.Time.now()
+            self.odom_received = True
+            vx = msg.twist.twist.linear.x
+            vy = msg.twist.twist.linear.y
+            self.current_speed = sqrt(vx**2 + vy**2)
+        except Exception as e:
+            rospy.logwarn_throttle(1.0, f"Odom callback error: {e}")
     
     def publish_telemetry(self):
         self.debug_state_pub.publish(String(data=self.state.name))
@@ -426,9 +469,7 @@ class CompetitionDriver:
                     continue
             
             self.check_watchdog()
-            
-            if self.state != DriveState.STOPPING:
-                self.update_state(self.left_cones, self.right_cones)
+            self.update_state(self.left_cones, self.right_cones)
             
             cmd = self.compute_control()
             self.cmd_pub.publish(cmd)
