@@ -93,6 +93,11 @@ class CompetitionDriver:
         self.last_odom_time = rospy.Time.now()
         self.recovery_start_time = None
         
+        self.last_throttle = 0.0
+        self.last_steering = 0.0
+        self.throttle_rate_limit = rospy.get_param('~throttle_rate_limit', 0.1)
+        self.steering_rate_limit = rospy.get_param('~steering_rate_limit', 0.15)
+        
         self.v2x_speed_limit = self.max_speed
         self.v2x_hazard = False
         self.v2x_stop_zone = False
@@ -152,27 +157,37 @@ class CompetitionDriver:
         if len(filtered) == 0:
             return [], []
         
-        cones = []
-        used = np.zeros(len(filtered), dtype=bool)
+        grid_res = self.cone_grouping_threshold
+        grid = {}
+        for i, pt in enumerate(filtered):
+            gx, gy = int(pt[0] / grid_res), int(pt[1] / grid_res)
+            key = (gx, gy)
+            if key not in grid:
+                grid[key] = []
+            grid[key].append(i)
         
-        for i in range(len(filtered)):
-            if used[i]:
+        cones = []
+        visited_cells = set()
+        
+        for cell_key, indices in grid.items():
+            if cell_key in visited_cells:
                 continue
             
-            group_indices = [i]
-            used[i] = True
+            cluster_indices = list(indices)
+            visited_cells.add(cell_key)
             
-            for j in range(i + 1, len(filtered)):
-                if used[j]:
-                    continue
-                if np.linalg.norm(filtered[i][:2] - filtered[j][:2]) < self.cone_grouping_threshold:
-                    group_indices.append(j)
-                    used[j] = True
+            gx, gy = cell_key
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    neighbor = (gx + dx, gy + dy)
+                    if neighbor in grid and neighbor not in visited_cells:
+                        cluster_indices.extend(grid[neighbor])
+                        visited_cells.add(neighbor)
             
-            if len(group_indices) < self.cone_min_points:
+            if len(cluster_indices) < self.cone_min_points:
                 continue
             
-            group = filtered[group_indices]
+            group = filtered[cluster_indices]
             xy = group[:, :2]
             center = xy.mean(axis=0)
             radii = np.linalg.norm(xy - center, axis=1)
@@ -185,7 +200,7 @@ class CompetitionDriver:
             cones.append({
                 'x': center[0],
                 'y': center[1],
-                'points': len(group_indices)
+                'points': len(cluster_indices)
             })
         
         left = sorted([c for c in cones if c['y'] > 0], key=lambda c: c['x'])
@@ -234,10 +249,15 @@ class CompetitionDriver:
         
         lookahead = self.lookahead_base + self.lookahead_speed_gain * self.current_speed
         
+        arc_length = 0.0
+        prev = {'x': 0.0, 'y': 0.0}
+        
         for point in centerline:
-            dist = sqrt(point['x']**2 + point['y']**2)
-            if dist >= lookahead:
+            segment = sqrt((point['x'] - prev['x'])**2 + (point['y'] - prev['y'])**2)
+            arc_length += segment
+            if arc_length >= lookahead:
                 return point
+            prev = point
         
         return centerline[-1] if centerline else None
     
@@ -289,6 +309,12 @@ class CompetitionDriver:
             speed = min(speed, self.min_speed)
         
         return speed
+    
+    def apply_rate_limit(self, target, current, max_rate):
+        delta = target - current
+        if abs(delta) > max_rate:
+            return current + max_rate * np.sign(delta)
+        return target
     
     def calculate_throttle(self, target_speed):
         speed_error = target_speed - self.current_speed
@@ -446,8 +472,13 @@ class CompetitionDriver:
         target_point = self.get_lookahead_point(centerline)
         
         self.current_steering = self.pure_pursuit_steering(target_point)
-        cmd.steering = self.current_steering
-        cmd.throttle = self.calculate_throttle(self.current_target_speed)
+        raw_throttle = self.calculate_throttle(self.current_target_speed)
+        
+        cmd.steering = self.apply_rate_limit(self.current_steering, self.last_steering, self.steering_rate_limit)
+        cmd.throttle = self.apply_rate_limit(raw_throttle, self.last_throttle, self.throttle_rate_limit)
+        
+        self.last_steering = cmd.steering
+        self.last_throttle = cmd.throttle
         cmd.brake = 0.0
         
         return cmd

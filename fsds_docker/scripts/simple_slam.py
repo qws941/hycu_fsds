@@ -4,9 +4,10 @@ import numpy as np
 from math import cos, sin, atan2, sqrt
 from nav_msgs.msg import Odometry, OccupancyGrid, Path
 from sensor_msgs.msg import PointCloud2
-from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
+from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion, TransformStamped
 import sensor_msgs.point_cloud2 as pc2
 import tf.transformations as tft
+import tf2_ros
 
 
 class SimpleSLAM:
@@ -29,6 +30,8 @@ class SimpleSLAM:
         self.path_history = []
         self.max_path_length = 500
         self.last_decay_time = rospy.Time.now()
+        
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster()
         
         self.map_pub = rospy.Publisher('/slam/map', OccupancyGrid, queue_size=1)
         self.path_pub = rospy.Publisher('/slam/path', Path, queue_size=1)
@@ -108,6 +111,31 @@ class SimpleSLAM:
         msg.pose.orientation = Quaternion(*q)
         self.pose_pub.publish(msg)
     
+    def publish_tf(self):
+        t = TransformStamped()
+        t.header.stamp = rospy.Time.now()
+        t.header.frame_id = "map"
+        t.child_frame_id = "odom"
+        t.transform.translation.x = 0.0
+        t.transform.translation.y = 0.0
+        t.transform.translation.z = 0.0
+        t.transform.rotation.w = 1.0
+        self.tf_broadcaster.sendTransform(t)
+        
+        t2 = TransformStamped()
+        t2.header.stamp = rospy.Time.now()
+        t2.header.frame_id = "odom"
+        t2.child_frame_id = "base_link"
+        t2.transform.translation.x = self.robot_x
+        t2.transform.translation.y = self.robot_y
+        t2.transform.translation.z = 0.0
+        q = tft.quaternion_from_euler(0, 0, self.robot_yaw)
+        t2.transform.rotation.x = q[0]
+        t2.transform.rotation.y = q[1]
+        t2.transform.rotation.z = q[2]
+        t2.transform.rotation.w = q[3]
+        self.tf_broadcaster.sendTransform(t2)
+    
     def apply_decay(self):
         now = rospy.Time.now()
         if (now - self.last_decay_time).to_sec() >= self.decay_interval:
@@ -119,6 +147,7 @@ class SimpleSLAM:
         
         while not rospy.is_shutdown():
             self.apply_decay()
+            self.publish_tf()
             self.publish_map()
             self.publish_path()
             self.publish_pose()
