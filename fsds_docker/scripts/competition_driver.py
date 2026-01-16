@@ -6,6 +6,7 @@ from enum import Enum
 from fs_msgs.msg import ControlCommand
 from sensor_msgs.msg import PointCloud2
 from nav_msgs.msg import Odometry
+from std_msgs.msg import String, Float32, Int32, Bool
 import sensor_msgs.point_cloud2 as pc2
 
 
@@ -13,6 +14,15 @@ class DriveState(Enum):
     TRACKING = 1
     DEGRADED = 2
     STOPPING = 3
+
+
+class StopReason(Enum):
+    NONE = 0
+    CONES_LOST = 1
+    LIDAR_STALE = 2
+    ODOM_STALE = 3
+    V2X_STOP_ZONE = 4
+    EMERGENCY_STOP = 5
 
 
 class CompetitionDriver:
@@ -37,20 +47,85 @@ class CompetitionDriver:
         
         self.degraded_timeout = 1.0
         self.stopping_timeout = 3.0
+        self.lidar_stale_timeout = 0.5
+        self.odom_stale_timeout = 0.5
         
         self.cmd_pub = rospy.Publisher('/fsds/control_command', ControlCommand, queue_size=1)
         rospy.Subscriber('/fsds/lidar/Lidar1', PointCloud2, self.lidar_callback)
         rospy.Subscriber('/fsds/testing_only/odom', Odometry, self.odom_callback)
         
+        self.debug_state_pub = rospy.Publisher('/debug/state', String, queue_size=1)
+        self.debug_speed_pub = rospy.Publisher('/debug/speed', Float32, queue_size=1)
+        self.debug_target_speed_pub = rospy.Publisher('/debug/target_speed', Float32, queue_size=1)
+        self.debug_curvature_pub = rospy.Publisher('/debug/curvature', Float32, queue_size=1)
+        self.debug_steering_pub = rospy.Publisher('/debug/steering', Float32, queue_size=1)
+        self.debug_cone_count_pub = rospy.Publisher('/debug/cone_count', Int32, queue_size=1)
+        self.debug_stop_reason_pub = rospy.Publisher('/debug/stop_reason', String, queue_size=1)
+        self.debug_commentary_pub = rospy.Publisher('/debug/commentary', String, queue_size=1)
+        
+        rospy.Subscriber('/v2x/speed_limit', Float32, self.v2x_speed_limit_callback)
+        rospy.Subscriber('/v2x/hazard', Bool, self.v2x_hazard_callback)
+        rospy.Subscriber('/v2x/stop_zone', Bool, self.v2x_stop_zone_callback)
+        rospy.Subscriber('/debug/e_stop', Bool, self.estop_callback)
+        
         self.current_speed = 0.0
         self.left_cones = []
         self.right_cones = []
         self.centerline = []
+        self.current_curvature = 0.0
+        self.current_target_speed = self.max_speed
+        self.current_steering = 0.0
         
         self.state = DriveState.TRACKING
+        self.stop_reason = StopReason.NONE
         self.last_valid_time = rospy.Time.now()
         self.last_valid_centerline = []
         self.last_valid_track_width = 4.0
+        self.last_lidar_time = rospy.Time.now()
+        self.last_odom_time = rospy.Time.now()
+        
+        self.v2x_speed_limit = self.max_speed
+        self.v2x_hazard = False
+        self.v2x_stop_zone = False
+        self.e_stop = False
+        
+        self.commentary_history = []
+        
+    def v2x_speed_limit_callback(self, msg):
+        self.v2x_speed_limit = msg.data
+        self.add_commentary(f"V2X: speed limit {msg.data:.1f} m/s")
+        
+    def v2x_hazard_callback(self, msg):
+        if msg.data != self.v2x_hazard:
+            self.v2x_hazard = msg.data
+            if msg.data:
+                self.add_commentary("V2X: hazard ahead, slowing down")
+            else:
+                self.add_commentary("V2X: hazard cleared")
+    
+    def v2x_stop_zone_callback(self, msg):
+        if msg.data != self.v2x_stop_zone:
+            self.v2x_stop_zone = msg.data
+            if msg.data:
+                self.add_commentary("V2X: entering stop zone")
+                self.stop_reason = StopReason.V2X_STOP_ZONE
+            else:
+                self.add_commentary("V2X: exiting stop zone")
+    
+    def estop_callback(self, msg):
+        if msg.data != self.e_stop:
+            self.e_stop = msg.data
+            if msg.data:
+                self.add_commentary("EMERGENCY STOP activated")
+                self.stop_reason = StopReason.EMERGENCY_STOP
+    
+    def add_commentary(self, text):
+        timestamp = rospy.Time.now().to_sec()
+        self.commentary_history.append((timestamp, text))
+        if len(self.commentary_history) > 20:
+            self.commentary_history.pop(0)
+        rospy.loginfo(f"[COMMENTARY] {text}")
+        self.debug_commentary_pub.publish(String(data=text))
         
     def find_cones_filtered(self, points):
         if len(points) == 0:
@@ -187,19 +262,58 @@ class CompetitionDriver:
         k = 2.0
         eps = 0.01
         speed = k / (abs(curvature) + eps)
-        return np.clip(speed, self.min_speed, self.max_speed)
+        speed = np.clip(speed, self.min_speed, self.max_speed)
+        
+        speed = min(speed, self.v2x_speed_limit)
+        
+        if self.v2x_hazard:
+            speed = min(speed, self.min_speed)
+        
+        return speed
     
     def calculate_throttle(self, target_speed):
         speed_error = target_speed - self.current_speed
         throttle = 0.3 * speed_error
         return np.clip(throttle, 0.0, self.max_throttle)
     
+    def check_watchdog(self):
+        now = rospy.Time.now()
+        
+        if self.e_stop:
+            self.state = DriveState.STOPPING
+            self.stop_reason = StopReason.EMERGENCY_STOP
+            return
+        
+        if self.v2x_stop_zone:
+            self.state = DriveState.STOPPING
+            self.stop_reason = StopReason.V2X_STOP_ZONE
+            return
+        
+        lidar_elapsed = (now - self.last_lidar_time).to_sec()
+        if lidar_elapsed > self.lidar_stale_timeout:
+            if self.state != DriveState.STOPPING or self.stop_reason != StopReason.LIDAR_STALE:
+                self.add_commentary(f"WATCHDOG: LiDAR stale ({lidar_elapsed:.1f}s)")
+            self.state = DriveState.STOPPING
+            self.stop_reason = StopReason.LIDAR_STALE
+            return
+        
+        odom_elapsed = (now - self.last_odom_time).to_sec()
+        if odom_elapsed > self.odom_stale_timeout:
+            if self.state != DriveState.STOPPING or self.stop_reason != StopReason.ODOM_STALE:
+                self.add_commentary(f"WATCHDOG: Odometry stale ({odom_elapsed:.1f}s)")
+            self.state = DriveState.STOPPING
+            self.stop_reason = StopReason.ODOM_STALE
+            return
+    
     def update_state(self, left_cones, right_cones):
         now = rospy.Time.now()
         has_valid_cones = len(left_cones) >= 1 and len(right_cones) >= 1
         
         if has_valid_cones:
+            if self.state != DriveState.TRACKING:
+                self.add_commentary("Cones recovered, resuming TRACKING")
             self.state = DriveState.TRACKING
+            self.stop_reason = StopReason.NONE
             self.last_valid_time = now
             
             if left_cones and right_cones:
@@ -210,11 +324,17 @@ class CompetitionDriver:
             elapsed = (now - self.last_valid_time).to_sec()
             
             if elapsed > self.stopping_timeout:
+                if self.state != DriveState.STOPPING:
+                    self.add_commentary(f"Cones lost for {elapsed:.1f}s, STOPPING")
                 self.state = DriveState.STOPPING
+                self.stop_reason = StopReason.CONES_LOST
             elif elapsed > self.degraded_timeout:
+                if self.state != DriveState.DEGRADED:
+                    self.add_commentary(f"Cones lost for {elapsed:.1f}s, DEGRADED mode")
                 self.state = DriveState.DEGRADED
     
     def lidar_callback(self, msg):
+        self.last_lidar_time = rospy.Time.now()
         points = np.array(list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)))
         self.left_cones, self.right_cones = self.find_cones_filtered(points)
         self.centerline = self.build_centerline(self.left_cones, self.right_cones)
@@ -222,12 +342,24 @@ class CompetitionDriver:
         if self.centerline:
             self.last_valid_centerline = self.centerline
         
-        self.update_state(self.left_cones, self.right_cones)
+        self.check_watchdog()
+        if self.state != DriveState.STOPPING:
+            self.update_state(self.left_cones, self.right_cones)
     
     def odom_callback(self, msg):
+        self.last_odom_time = rospy.Time.now()
         vx = msg.twist.twist.linear.x
         vy = msg.twist.twist.linear.y
         self.current_speed = sqrt(vx**2 + vy**2)
+    
+    def publish_telemetry(self):
+        self.debug_state_pub.publish(String(data=self.state.name))
+        self.debug_speed_pub.publish(Float32(data=self.current_speed))
+        self.debug_target_speed_pub.publish(Float32(data=self.current_target_speed))
+        self.debug_curvature_pub.publish(Float32(data=self.current_curvature))
+        self.debug_steering_pub.publish(Float32(data=self.current_steering))
+        self.debug_cone_count_pub.publish(Int32(data=len(self.left_cones) + len(self.right_cones)))
+        self.debug_stop_reason_pub.publish(String(data=self.stop_reason.name))
     
     def compute_control(self):
         cmd = ControlCommand()
@@ -236,35 +368,43 @@ class CompetitionDriver:
             cmd.throttle = 0.0
             cmd.steering = 0.0
             cmd.brake = 1.0
+            self.current_target_speed = 0.0
+            self.current_steering = 0.0
             return cmd
         
         if self.state == DriveState.DEGRADED:
             centerline = self.last_valid_centerline
-            target_speed = self.min_speed
+            self.current_target_speed = self.min_speed
         else:
             centerline = self.centerline
-            curvature = self.estimate_curvature(centerline)
-            target_speed = self.calculate_target_speed(curvature)
+            self.current_curvature = self.estimate_curvature(centerline)
+            self.current_target_speed = self.calculate_target_speed(self.current_curvature)
         
         target_point = self.get_lookahead_point(centerline)
         
-        cmd.steering = self.pure_pursuit_steering(target_point)
-        cmd.throttle = self.calculate_throttle(target_speed)
+        self.current_steering = self.pure_pursuit_steering(target_point)
+        cmd.steering = self.current_steering
+        cmd.throttle = self.calculate_throttle(self.current_target_speed)
         cmd.brake = 0.0
         
         return cmd
     
     def run(self):
         rate = rospy.Rate(20)
-        rospy.loginfo("Competition Driver started - Pure Pursuit + Curvature Speed Control")
+        rospy.loginfo("=" * 50)
+        rospy.loginfo("Competition Driver v2.0")
+        rospy.loginfo("Features: Pure Pursuit + Curvature Speed + V2X + Watchdog")
+        rospy.loginfo("=" * 50)
+        self.add_commentary("Driver initialized, waiting for sensor data")
         
         while not rospy.is_shutdown():
             cmd = self.compute_control()
             self.cmd_pub.publish(cmd)
+            self.publish_telemetry()
             
             if rospy.Time.now().to_sec() % 2 < 0.1:
-                rospy.loginfo(f"State: {self.state.name}, Speed: {self.current_speed:.1f}, "
-                             f"L:{len(self.left_cones)} R:{len(self.right_cones)}")
+                rospy.loginfo(f"[{self.state.name}] Speed: {self.current_speed:.1f}/{self.current_target_speed:.1f} m/s | "
+                             f"Steer: {self.current_steering:.2f} | L:{len(self.left_cones)} R:{len(self.right_cones)}")
             
             rate.sleep()
 

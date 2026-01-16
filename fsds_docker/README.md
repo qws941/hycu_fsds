@@ -105,6 +105,39 @@ python3 /root/catkin_ws/src/fsds_scripts/scripts/simple_slam.py
 | 로그 확인 | `docker-compose logs -f` |
 | 전체 종료 | `docker-compose down` |
 
+## V2X RSU (v2x_rsu.py)
+
+V2X 인프라 시뮬레이션 노드. 경진대회 가산점 요소.
+
+```bash
+python3 /root/catkin_ws/src/fsds_scripts/scripts/v2x_rsu.py -i
+python3 /root/catkin_ws/src/fsds_scripts/scripts/v2x_rsu.py -d
+```
+
+### 시나리오
+
+| 시나리오 | speed_limit | hazard | stop_zone | 설명 |
+|----------|-------------|--------|-----------|------|
+| normal | 6.0 m/s | false | false | 정상 주행 |
+| slow_zone | 3.0 m/s | false | false | 속도 제한 구역 |
+| hazard | 6.0 m/s | true | false | 위험 경고 (50% 감속) |
+| stop | 6.0 m/s | false | true | 정지 구역 |
+| emergency | 2.0 m/s | true | false | 긴급 상황 |
+
+### V2X 토픽
+
+| 토픽 | 타입 | 설명 |
+|------|------|------|
+| `/v2x/speed_limit` | Float32 | 속도 제한 (m/s) |
+| `/v2x/hazard` | Bool | 위험 경고 플래그 |
+| `/v2x/stop_zone` | Bool | 정지 구역 플래그 |
+
+## 데모 체크리스트
+
+```bash
+./preflight_check.sh
+```
+
 ## ROS 토픽
 
 | 토픽 | 타입 | 방향 |
@@ -112,3 +145,6 @@ python3 /root/catkin_ws/src/fsds_scripts/scripts/simple_slam.py
 | `/fsds/control_command` | ControlCommand | Publish |
 | `/fsds/lidar/Lidar1` | PointCloud2 | Subscribe |
 | `/fsds/testing_only/odom` | Odometry | Subscribe |
+| `/debug/*` | std_msgs | Publish (telemetry) |
+| `/v2x/*` | std_msgs | Subscribe (V2X) |
+| `/slam/*` | nav_msgs | Publish (SLAM) |

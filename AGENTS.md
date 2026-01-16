@@ -16,12 +16,14 @@ fsds_docker/
 ├── docker-compose.yml   # 4 services: roscore, bridge, dev, rviz
 ├── .env                 # FSDS_HOST_IP (Windows IP)
 ├── start.sh             # One-click launcher
+├── preflight_check.sh   # Demo rehearsal script
 └── scripts/
     ├── basic_driver.py      # LiDAR obstacle stop
     ├── autonomous_driver.py # Cone detection + steering
     ├── advanced_driver.py   # PID + centerline following
     ├── competition_driver.py # Pure Pursuit + curvature speed (MAIN)
-    └── simple_slam.py       # Occupancy grid SLAM
+    ├── simple_slam.py       # Occupancy grid SLAM
+    └── v2x_rsu.py           # V2X Virtual RSU (bonus points)
 ```
 
 ## WHERE TO LOOK
