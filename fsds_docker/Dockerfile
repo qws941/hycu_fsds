@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y \
     python3-rosinstall \
     python3-rosinstall-generator \
     python3-wstool \
-    python3-numpy \
+    # python3-numpy removed - using pip version for consistency
     # ROS packages
     ros-noetic-tf2-geometry-msgs \
     ros-noetic-rqt-multiplot \

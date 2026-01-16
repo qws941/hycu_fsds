@@ -75,8 +75,10 @@ services:
       dockerfile: Dockerfile
     container_name: fsds_dev
     depends_on:
-      - roscore
-      - fsds_bridge
+      roscore:
+        condition: service_healthy
+      fsds_bridge:
+        condition: service_healthy
     networks:
       - fsds_network
     environment:
