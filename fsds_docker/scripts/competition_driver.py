@@ -89,6 +89,10 @@ class CompetitionDriver:
         self.v2x_stop_zone = False
         self.e_stop = False
         
+        self.sensors_ready = False
+        self.lidar_received = False
+        self.odom_received = False
+        
         self.commentary_history = []
         
     def v2x_speed_limit_callback(self, msg):
@@ -335,19 +339,17 @@ class CompetitionDriver:
     
     def lidar_callback(self, msg):
         self.last_lidar_time = rospy.Time.now()
+        self.lidar_received = True
         points = np.array(list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)))
         self.left_cones, self.right_cones = self.find_cones_filtered(points)
         self.centerline = self.build_centerline(self.left_cones, self.right_cones)
         
         if self.centerline:
             self.last_valid_centerline = self.centerline
-        
-        self.check_watchdog()
-        if self.state != DriveState.STOPPING:
-            self.update_state(self.left_cones, self.right_cones)
     
     def odom_callback(self, msg):
         self.last_odom_time = rospy.Time.now()
+        self.odom_received = True
         vx = msg.twist.twist.linear.x
         vy = msg.twist.twist.linear.y
         self.current_speed = sqrt(vx**2 + vy**2)
@@ -392,12 +394,30 @@ class CompetitionDriver:
     def run(self):
         rate = rospy.Rate(20)
         rospy.loginfo("=" * 50)
-        rospy.loginfo("Competition Driver v2.0")
+        rospy.loginfo("Competition Driver v2.1")
         rospy.loginfo("Features: Pure Pursuit + Curvature Speed + V2X + Watchdog")
         rospy.loginfo("=" * 50)
         self.add_commentary("Driver initialized, waiting for sensor data")
         
         while not rospy.is_shutdown():
+            if not self.sensors_ready:
+                if self.lidar_received and self.odom_received:
+                    self.sensors_ready = True
+                    self.add_commentary("Sensors ready, starting autonomous control")
+                else:
+                    cmd = ControlCommand()
+                    cmd.throttle = 0.0
+                    cmd.steering = 0.0
+                    cmd.brake = 1.0
+                    self.cmd_pub.publish(cmd)
+                    rate.sleep()
+                    continue
+            
+            self.check_watchdog()
+            
+            if self.state != DriveState.STOPPING:
+                self.update_state(self.left_cones, self.right_cones)
+            
             cmd = self.compute_control()
             self.cmd_pub.publish(cmd)
             self.publish_telemetry()
