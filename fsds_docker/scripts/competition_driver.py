@@ -527,29 +527,38 @@ class CompetitionDriver:
         self.add_commentary("Driver initialized, waiting for sensor data")
         
         while not rospy.is_shutdown():
-            if not self.sensors_ready:
-                if self.lidar_received and self.odom_received:
-                    self.sensors_ready = True
-                    self.add_commentary("Sensors ready, starting autonomous control")
-                else:
-                    cmd = ControlCommand()
-                    cmd.throttle = 0.0
-                    cmd.steering = 0.0
-                    cmd.brake = 1.0
-                    self.cmd_pub.publish(cmd)
-                    rate.sleep()
-                    continue
-            
-            self.check_watchdog()
-            self.update_state(self.left_cones, self.right_cones)
-            
-            cmd = self.compute_control()
-            self.cmd_pub.publish(cmd)
-            self.publish_telemetry()
-            
-            if rospy.Time.now().to_sec() % 2 < 0.1:
-                rospy.loginfo(f"[{self.state.name}] Speed: {self.current_speed:.1f}/{self.current_target_speed:.1f} m/s | "
-                             f"Steer: {self.current_steering:.2f} | L:{len(self.left_cones)} R:{len(self.right_cones)}")
+            try:
+                if not self.sensors_ready:
+                    if self.lidar_received and self.odom_received:
+                        self.sensors_ready = True
+                        self.add_commentary("Sensors ready, starting autonomous control")
+                    else:
+                        cmd = ControlCommand()
+                        cmd.throttle = 0.0
+                        cmd.steering = 0.0
+                        cmd.brake = 1.0
+                        self.cmd_pub.publish(cmd)
+                        rate.sleep()
+                        continue
+                
+                self.check_watchdog()
+                self.update_state(self.left_cones, self.right_cones)
+                
+                cmd = self.compute_control()
+                self.cmd_pub.publish(cmd)
+                self.publish_telemetry()
+                
+                if rospy.Time.now().to_sec() % 2 < 0.1:
+                    rospy.loginfo(f"[{self.state.name}] Speed: {self.current_speed:.1f}/{self.current_target_speed:.1f} m/s | "
+                                 f"Steer: {self.current_steering:.2f} | L:{len(self.left_cones)} R:{len(self.right_cones)}")
+            except Exception as e:
+                rospy.logerr(f"Main loop error: {e}")
+                # Emergency stop on error
+                cmd = ControlCommand()
+                cmd.throttle = 0.0
+                cmd.steering = 0.0
+                cmd.brake = 1.0
+                self.cmd_pub.publish(cmd)
             
             rate.sleep()
 

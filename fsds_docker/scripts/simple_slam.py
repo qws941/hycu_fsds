@@ -152,11 +152,14 @@ class SimpleSLAM:
         rate = rospy.Rate(5)
         
         while not rospy.is_shutdown():
-            self.apply_decay()
-            self.publish_tf()
-            self.publish_map()
-            self.publish_path()
-            self.publish_pose()
+            try:
+                self.apply_decay()
+                self.publish_tf()
+                self.publish_map()
+                self.publish_path()
+                self.publish_pose()
+            except Exception as e:
+                rospy.logerr(f"SLAM main loop error: {e}")
             rate.sleep()
 
 
