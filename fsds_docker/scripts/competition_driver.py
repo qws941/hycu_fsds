@@ -303,7 +303,10 @@ class CompetitionDriver:
         speed = np.sqrt(max_lateral_accel / (abs(curvature) + 0.01))
         speed = np.clip(speed, self.min_speed, self.max_speed)
         
-        speed = min(speed, self.v2x_speed_limit)
+        # V2X speed limit (clamp to valid range, 0 means stop)
+        if self.v2x_speed_limit <= 0:
+            return 0.0  # Signal full stop
+        speed = min(speed, max(self.v2x_speed_limit, self.min_speed))
         
         if self.v2x_hazard:
             speed = min(speed, self.min_speed)
@@ -411,6 +414,9 @@ class CompetitionDriver:
             points = np.array(list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)))
             
             if len(points) == 0:
+                self.left_cones = []
+                self.right_cones = []
+                self.centerline = []
                 return
             
             if np.any(np.isnan(points)) or np.any(np.isinf(points)):
@@ -479,7 +485,15 @@ class CompetitionDriver:
         
         self.last_steering = cmd.steering
         self.last_throttle = cmd.throttle
-        cmd.brake = 0.0
+        
+        # Active braking when target speed is very low (V2X stop command)
+        if self.current_target_speed < 0.5:
+            cmd.throttle = 0.0
+            cmd.brake = 1.0
+        elif self.current_speed > self.current_target_speed + 1.0:
+            cmd.brake = min(0.5, (self.current_speed - self.current_target_speed) * 0.3)
+        else:
+            cmd.brake = 0.0
         
         return cmd
     
