@@ -41,46 +41,39 @@ class LapTimer:
         rospy.loginfo("=" * 50)
     
     def odom_callback(self, msg):
-        try:
-            x = msg.pose.pose.position.x
-            y = msg.pose.pose.position.y
-            vx = msg.twist.twist.linear.x
-            vy = msg.twist.twist.linear.y
-            
-            if not all(map(lambda v: isinstance(v, (int, float)) and not (v != v), [x, y, vx, vy])):
-                return
-            
-            self.current_speed = sqrt(vx**2 + vy**2)
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        vx = msg.twist.twist.linear.x
+        vy = msg.twist.twist.linear.y
+        self.current_speed = sqrt(vx**2 + vy**2)
         
-            if self.current_speed > self.max_speed:
-                self.max_speed = self.current_speed
-            
-            if self.start_x is None:
-                self.start_x = x
-                self.start_y = y
-                self.last_x = x
-                self.last_y = y
-                self.lap_start_time = rospy.Time.now()
-                rospy.loginfo(f"Start/Finish set at ({x:.1f}, {y:.1f})")
-                return
-            
-            if self.last_x is not None:
-                dx = x - self.last_x
-                dy = y - self.last_y
-                self.total_distance += sqrt(dx**2 + dy**2)
-            
+        if self.current_speed > self.max_speed:
+            self.max_speed = self.current_speed
+        
+        if self.start_x is None:
+            self.start_x = x
+            self.start_y = y
             self.last_x = x
             self.last_y = y
-            
-            dist_to_start = sqrt((x - self.start_x)**2 + (y - self.start_y)**2)
-            
-            if not self.away_from_start and dist_to_start > self.min_lap_distance:
-                self.away_from_start = True
-            
-            if self.away_from_start and dist_to_start < self.start_threshold:
-                self.complete_lap()
-        except Exception as e:
-            rospy.logwarn_throttle(5.0, f"Odom callback error: {e}")
+            self.lap_start_time = rospy.Time.now()
+            rospy.loginfo(f"Start/Finish set at ({x:.1f}, {y:.1f})")
+            return
+        
+        if self.last_x is not None:
+            dx = x - self.last_x
+            dy = y - self.last_y
+            self.total_distance += sqrt(dx**2 + dy**2)
+        
+        self.last_x = x
+        self.last_y = y
+        
+        dist_to_start = sqrt((x - self.start_x)**2 + (y - self.start_y)**2)
+        
+        if not self.away_from_start and dist_to_start > self.min_lap_distance:
+            self.away_from_start = True
+        
+        if self.away_from_start and dist_to_start < self.start_threshold:
+            self.complete_lap()
     
     def complete_lap(self):
         now = rospy.Time.now()

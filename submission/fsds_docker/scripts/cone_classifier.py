@@ -32,8 +32,7 @@ class ConeClassifier:
     def lidar_callback(self, msg):
         try:
             points = list(pc2.read_points(msg, field_names=("x", "y", "z", "intensity"), skip_nans=True))
-        except Exception as e:
-            rospy.logwarn_throttle(10.0, f"Intensity field unavailable, using default: {e}")
+        except:
             points = list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True))
             points = [(p[0], p[1], p[2], 0.5) for p in points]
         
