@@ -59,27 +59,24 @@ RUN pip3 install --no-cache-dir \
     scipy==1.10.1 \
     matplotlib==3.7.2 \
     opencv-python==4.8.0.74 \
-    msgpack-rpc-python==0.4.1 \
-    airsim==1.8.1
+    msgpack-rpc-python==0.4.1
+
+RUN pip3 install --no-cache-dir airsim==1.8.1
 
 # ===========================================
 # ROS Workspace Setup
 # ===========================================
 WORKDIR /root
 
-# Clone FSDS Repository (pinned to known-good commit)
+# Clone FSDS Repository for ROS messages only (skip AirLib C++ build)
 RUN git clone https://github.com/FS-Driverless/Formula-Student-Driverless-Simulator.git \
-    --recurse-submodules --depth 1 && \
-    cd Formula-Student-Driverless-Simulator && \
-    git fetch --depth 1 origin e8a92d8 && \
-    git checkout e8a92d8
+    --recurse-submodules --depth 1
 
-# Build AirLib
-WORKDIR /root/Formula-Student-Driverless-Simulator/AirSim
-RUN ./setup.sh && ./build.sh
+# Setup Catkin Workspace with fs_msgs only
+WORKDIR /root/catkin_ws/src
+RUN ln -s /root/Formula-Student-Driverless-Simulator/ros/src/fs_msgs .
 
-# Setup Catkin Workspace
-WORKDIR /root/Formula-Student-Driverless-Simulator/ros
+WORKDIR /root/catkin_ws
 RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
     catkin init && \
     catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release && \
@@ -95,7 +92,7 @@ WORKDIR /root/catkin_ws
 # Environment Setup
 # ===========================================
 RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc && \
-    echo "source /root/Formula-Student-Driverless-Simulator/ros/devel/setup.bash" >> ~/.bashrc && \
+    echo "source /root/catkin_ws/devel/setup.bash" >> ~/.bashrc && \
     echo "export ROS_MASTER_URI=\${ROS_MASTER_URI:-http://localhost:11311}" >> ~/.bashrc
 
 # Entry point

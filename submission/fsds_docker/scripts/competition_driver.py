@@ -1,5 +1,78 @@
 #!/usr/bin/env python3
+"""
+FSDS Competition Driver - 자율주행 시뮬레이션 포뮬러 경진대회 메인 드라이버
+
+=============================================================================
+시스템 구성 (Architecture)
+=============================================================================
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌──────────────┐
+│ Perception  │ -> │   Planning   │ -> │   Control   │ -> │    Safety    │
+│ (LiDAR/Odom)│    │ (Pure Pursuit)│    │ (Throttle/  │    │  (Watchdog/  │
+│             │    │              │    │  Steering)  │    │   E-Stop)    │
+└─────────────┘    └──────────────┘    └─────────────┘    └──────────────┘
+
+=============================================================================
+알고리즘 (Algorithms)
+=============================================================================
+1. 콘 검출 (Cone Detection)
+   - Grid 기반 클러스터링 O(N): 인접 셀 BFS로 포인트 그룹화
+   - Z-height 필터: 지면(-0.3m) ~ 콘 상단(0.5m) 범위만 추출
+   - 품질 검증: 클러스터 반경, 분산, 최소 포인트 수 확인
+
+2. Pure Pursuit 조향 (Steering)
+   - 기하학적 경로 추종 알고리즘 (Coulter, 1992)
+   - Lookahead 거리: L = L_base + v * gain (속도 비례 조정)
+   - 조향각: δ = atan2(2 * wheelbase * sin(α) / L)
+   - Arc-length 기반 lookahead point 선택으로 커브 안정성 확보
+
+3. 곡률 기반 속도 제어 (Speed Control)
+   - 최대 횡가속도 모델: v = √(a_lat_max / κ)
+   - a_lat_max = 4.0 m/s² (기본값, ROS param으로 조정 가능)
+   - V2X 속도 제한 및 위험 경고 반영
+
+4. 상태머신 (State Machine)
+   - TRACKING: 정상 주행 (좌/우 콘 탐지)
+   - DEGRADED: 부분 탐지 (한쪽 콘 또는 일시적 미탐지)
+   - STOPPING: 안전 정지 (센서 stale, 장기 미탐지, V2X stop)
+
+=============================================================================
+V2X 통합 (V2X Integration)
+=============================================================================
+RSU(Road-Side Unit)로부터 수신하는 메시지:
+- /v2x/speed_limit: 구역별 속도 제한 (IVI 메시지 대응)
+- /v2x/hazard: 위험 경고 플래그 (DENM 메시지 대응)
+- /v2x/stop_zone: 정지 구역 플래그 (Geo-fenced zone)
+
+=============================================================================
+참고문헌 (References)
+=============================================================================
+[1] Coulter, R.C. (1992). "Implementation of the Pure Pursuit Path Tracking
+    Algorithm". CMU-RI-TR-92-01, Carnegie Mellon University.
+[2] Snider, J.M. (2009). "Automatic Steering Methods for Autonomous
+    Automobile Path Tracking". CMU-RI-TR-09-08.
+[3] ETSI EN 302 637-2: Intelligent Transport Systems; V2X Applications.
+
+=============================================================================
+ROS 토픽 (Topics)
+=============================================================================
+Subscribe:
+    /fsds/lidar/Lidar1 (PointCloud2)     - LiDAR 포인트클라우드
+    /fsds/testing_only/odom (Odometry)   - 차량 위치/속도
+    /v2x/speed_limit (Float32)           - V2X 속도 제한
+    /v2x/hazard (Bool)                   - V2X 위험 경고
+    /v2x/stop_zone (Bool)                - V2X 정지 구역
+
+Publish:
+    /fsds/control_command (ControlCommand) - 차량 제어 (throttle/steering/brake)
+    /debug/state (String)                  - 현재 상태
+    /debug/commentary (String)             - 자연어 상태 설명
+
+Author: HYCU Autonomous Driving Team
+Date: 2026-01
+"""
 import rospy
+import threading
+from collections import deque
 import numpy as np
 from math import atan2, sqrt
 from enum import Enum
@@ -108,10 +181,18 @@ class CompetitionDriver:
         self.odom_received = False
         
         self.commentary_history = []
+        self.data_lock = threading.Lock()
+        
+        # Cached params for hot path (avoid rospy.get_param every cycle)
+        self.max_lateral_accel = rospy.get_param('~max_lateral_accel', 4.0)
+        self.last_log_time = 0.0
         
     def v2x_speed_limit_callback(self, msg):
-        self.v2x_speed_limit = msg.data
-        self.add_commentary(f"V2X: speed limit {msg.data:.1f} m/s")
+        if np.isfinite(msg.data) and msg.data >= 0:
+            self.v2x_speed_limit = msg.data
+            self.add_commentary(f"V2X: speed limit {msg.data:.1f} m/s")
+        else:
+            rospy.logwarn_throttle(1.0, f"V2X: invalid speed_limit {msg.data}, ignored")
         
     def v2x_hazard_callback(self, msg):
         if msg.data != self.v2x_hazard:
@@ -174,10 +255,10 @@ class CompetitionDriver:
                 continue
             
             cluster_indices = []
-            queue = [cell_key]
+            queue = deque([cell_key])
             
             while queue:
-                current = queue.pop(0)
+                current = queue.popleft()
                 if current in visited_cells:
                     continue
                 if current not in grid:
@@ -320,18 +401,18 @@ class CompetitionDriver:
         return np.mean(self.curvature_history)
     
     def calculate_target_speed(self, curvature):
-        max_lateral_accel = rospy.get_param('~max_lateral_accel', 4.0)
-        speed = np.sqrt(max_lateral_accel / (abs(curvature) + 0.01))
+        speed = np.sqrt(self.max_lateral_accel / (abs(curvature) + 0.01))
         speed = np.clip(speed, self.min_speed, self.max_speed)
         
-        # V2X speed limit (clamp to valid range, 0 means stop)
         if self.v2x_speed_limit <= 0:
-            return 0.0  # Signal full stop
+            return 0.0
         speed = min(speed, max(self.v2x_speed_limit, self.min_speed))
         
         if self.v2x_hazard:
             speed = min(speed, self.min_speed)
         
+        if not np.isfinite(speed):
+            return self.min_speed
         return speed
     
     def apply_rate_limit(self, target, current, max_rate):
@@ -357,6 +438,13 @@ class CompetitionDriver:
         if self.v2x_stop_zone:
             self.state = DriveState.STOPPING
             self.stop_reason = StopReason.V2X_STOP_ZONE
+            self.recovery_start_time = None
+            return
+        
+        if self.state == DriveState.STOPPING and self.stop_reason in [StopReason.V2X_STOP_ZONE, StopReason.EMERGENCY_STOP]:
+            self.add_commentary(f"WATCHDOG: {self.stop_reason.name} cleared, resuming DEGRADED")
+            self.state = DriveState.DEGRADED
+            self.stop_reason = StopReason.NONE
             self.recovery_start_time = None
             return
         
@@ -435,19 +523,24 @@ class CompetitionDriver:
             points = np.array(list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)))
             
             if len(points) == 0:
-                self.left_cones = []
-                self.right_cones = []
-                self.centerline = []
+                with self.data_lock:
+                    self.left_cones = []
+                    self.right_cones = []
+                    self.centerline = []
                 return
             
             if np.any(np.isnan(points)) or np.any(np.isinf(points)):
                 points = points[~np.isnan(points).any(axis=1) & ~np.isinf(points).any(axis=1)]
             
-            self.left_cones, self.right_cones = self.find_cones_filtered(points)
-            self.centerline = self.build_centerline(self.left_cones, self.right_cones)
+            left, right = self.find_cones_filtered(points)
+            center = self.build_centerline(left, right)
             
-            if self.centerline:
-                self.last_valid_centerline = self.centerline
+            with self.data_lock:
+                self.left_cones = left
+                self.right_cones = right
+                self.centerline = center
+                if center:
+                    self.last_valid_centerline = center
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"LiDAR callback error: {e}")
     
@@ -457,7 +550,11 @@ class CompetitionDriver:
             self.odom_received = True
             vx = msg.twist.twist.linear.x
             vy = msg.twist.twist.linear.y
-            self.current_speed = sqrt(vx**2 + vy**2)
+            speed = sqrt(vx**2 + vy**2)
+            if np.isfinite(speed):
+                self.current_speed = speed
+            else:
+                rospy.logwarn_throttle(1.0, "Odom NaN/Inf detected, using last valid speed")
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"Odom callback error: {e}")
     
@@ -470,7 +567,8 @@ class CompetitionDriver:
         self.debug_cone_count_pub.publish(Int32(data=len(self.left_cones) + len(self.right_cones)))
         self.debug_stop_reason_pub.publish(String(data=self.stop_reason.name))
     
-    def compute_control(self):
+    def compute_control(self, centerline_snapshot, last_valid_centerline_snapshot):
+        """Compute control command based on current state and centerline snapshots."""
         cmd = ControlCommand()
         
         if self.state == DriveState.STOPPING:
@@ -482,7 +580,7 @@ class CompetitionDriver:
             return cmd
         
         if self.state == DriveState.DEGRADED:
-            centerline = self.last_valid_centerline
+            centerline = last_valid_centerline_snapshot
             self.current_target_speed = self.min_speed
             speed_error = self.current_speed - self.current_target_speed
             if speed_error > 0.5:
@@ -492,7 +590,7 @@ class CompetitionDriver:
                 self.current_steering = cmd.steering
                 return cmd
         else:
-            centerline = self.centerline
+            centerline = centerline_snapshot
             self.current_curvature = self.estimate_curvature(centerline)
             self.current_target_speed = self.calculate_target_speed(self.current_curvature)
         
@@ -542,13 +640,22 @@ class CompetitionDriver:
                         continue
                 
                 self.check_watchdog()
-                self.update_state(self.left_cones, self.right_cones)
                 
-                cmd = self.compute_control()
+                with self.data_lock:
+                    left_snapshot = list(self.left_cones)
+                    right_snapshot = list(self.right_cones)
+                    centerline_snapshot = list(self.centerline)
+                    last_valid_centerline_snapshot = list(self.last_valid_centerline)
+                
+                self.update_state(left_snapshot, right_snapshot)
+                
+                cmd = self.compute_control(centerline_snapshot, last_valid_centerline_snapshot)
                 self.cmd_pub.publish(cmd)
                 self.publish_telemetry()
                 
-                if rospy.Time.now().to_sec() % 2 < 0.1:
+                now_sec = rospy.Time.now().to_sec()
+                if now_sec - self.last_log_time >= 2.0:
+                    self.last_log_time = now_sec
                     rospy.loginfo(f"[{self.state.name}] Speed: {self.current_speed:.1f}/{self.current_target_speed:.1f} m/s | "
                                  f"Steer: {self.current_steering:.2f} | L:{len(self.left_cones)} R:{len(self.right_cones)}")
             except Exception as e:

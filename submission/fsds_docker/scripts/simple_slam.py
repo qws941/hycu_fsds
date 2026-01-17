@@ -1,4 +1,79 @@
 #!/usr/bin/env python3
+"""
+Simple SLAM Node - Occupancy Grid Mapping for FSDS
+===================================================
+
+이 모듈은 Formula Student Driverless Simulator(FSDS)용 
+2D Occupancy Grid Mapping을 구현합니다.
+
+SLAM vs Mapping 비교 (Scope Clarification)
+-------------------------------------------
+본 구현은 "Full SLAM"이 아닌 **Mapping 중심 구현**입니다.
+
++-------------------+-----------------+---------------------------+
+| SLAM 구성요소     | Full SLAM       | 본 구현                   |
++-------------------+-----------------+---------------------------+
+| Scan Matching     | ICP/NDT         | (미구현) Odometry 의존    |
+| Loop Closure      | Pose Graph      | (미구현)                  |
+| Localization      | Particle/EKF    | Simulator Odometry 의존   |
+| Mapping           | Occupancy Grid  | ✓ 구현됨                  |
++-------------------+-----------------+---------------------------+
+
+의도된 단순화 (Design Decisions)
+---------------------------------
+1. **Localization**: 시뮬레이터가 제공하는 ground-truth odometry에 의존.
+   실제 차량에서는 EKF/UKF 기반 센서 퓨전이 필요합니다.
+
+2. **Occupancy Update**: Hit-only 누적 방식 사용.
+   - 표준 방식: Ray-casting으로 free cell도 업데이트 (Bresenham)
+   - 본 구현: Hit cell만 확률 증가 (계산 효율 + 안정성 우선)
+
+3. **Decay 메커니즘**: Ghost obstacle 완화 목적.
+   - 동적 장애물이 지나간 후에도 맵에 남는 문제 방지
+   - decay_rate (기본 2) 만큼 주기적으로 occupancy 감소
+
+4. **TF Tree 설계**: 
+   - map → odom: 항등 변환 (SLAM drift 보정 미구현)
+   - odom → base_link: 옵션 (~publish_base_link_tf 파라미터)
+
+알고리즘 (Algorithm)
+--------------------
+1. LiDAR PointCloud2 수신 → 높이(z) 필터링 (-0.3m ~ 0.5m)
+2. 로봇 좌표계 → 월드 좌표계 변환 (odom 기반)
+3. 월드 좌표 → 그리드 셀 인덱스 계산
+4. Hit 셀 점유 확률 증가 (+10, 최대 100)
+5. 주기적 decay로 오래된 장애물 제거
+
+참고문헌 (References)
+---------------------
+- Thrun, S., Burgard, W., & Fox, D. (2005). 
+  Probabilistic Robotics. MIT Press. (Chapter 9: Occupancy Grid Mapping)
+- Grisetti, G., Stachniss, C., & Burgard, W. (2007). 
+  Improved Techniques for Grid Mapping With Rao-Blackwellized Particle Filters. 
+  IEEE Transactions on Robotics, 23(1), 34-46.
+
+ROS Interface
+-------------
+Parameters:
+    ~map_resolution (float): 그리드 해상도 (m/cell), 기본값 0.1
+    ~map_size (int): 그리드 크기 (cells), 기본값 200
+    ~decay_rate (int): Decay 감소량, 기본값 2
+    ~decay_interval (float): Decay 주기 (초), 기본값 1.0
+    ~publish_base_link_tf (bool): base_link TF 발행 여부, 기본값 False
+
+Subscribed Topics:
+    /fsds/lidar/Lidar1 (sensor_msgs/PointCloud2): LiDAR 포인트 클라우드
+    /fsds/testing_only/odom (nav_msgs/Odometry): 차량 위치/자세
+
+Published Topics:
+    /slam/map (nav_msgs/OccupancyGrid): 점유 격자 맵
+    /slam/path (nav_msgs/Path): 주행 경로 기록
+    /slam/pose (geometry_msgs/PoseStamped): 현재 위치/자세
+
+TF Broadcasts:
+    map → odom: 항등 변환
+    odom → base_link: 차량 위치 (옵션)
+"""
 import rospy
 import numpy as np
 from math import cos, sin, atan2, sqrt
@@ -19,8 +94,11 @@ class SimpleSLAM:
         self.map_origin = -self.map_size * self.map_resolution / 2
         self.decay_rate = rospy.get_param('~decay_rate', 2)
         self.decay_interval = rospy.get_param('~decay_interval', 1.0)
+        self.publish_base_link_tf = rospy.get_param('~publish_base_link_tf', False)
         
-        self.occupancy_grid = np.zeros((self.map_size, self.map_size), dtype=np.int8)
+        # Initialize with -1 (unknown) per ROS OccupancyGrid convention
+        # Values: -1=unknown, 0=free, 100=occupied
+        self.occupancy_grid = np.full((self.map_size, self.map_size), -1, dtype=np.int8)
         self.cone_map = []
         
         self.robot_x = 0.0
@@ -128,19 +206,20 @@ class SimpleSLAM:
         t.transform.rotation.w = 1.0
         self.tf_broadcaster.sendTransform(t)
         
-        t2 = TransformStamped()
-        t2.header.stamp = rospy.Time.now()
-        t2.header.frame_id = "odom"
-        t2.child_frame_id = "base_link"
-        t2.transform.translation.x = self.robot_x
-        t2.transform.translation.y = self.robot_y
-        t2.transform.translation.z = 0.0
-        q = tft.quaternion_from_euler(0, 0, self.robot_yaw)
-        t2.transform.rotation.x = q[0]
-        t2.transform.rotation.y = q[1]
-        t2.transform.rotation.z = q[2]
-        t2.transform.rotation.w = q[3]
-        self.tf_broadcaster.sendTransform(t2)
+        if self.publish_base_link_tf:
+            t2 = TransformStamped()
+            t2.header.stamp = rospy.Time.now()
+            t2.header.frame_id = "odom"
+            t2.child_frame_id = "base_link"
+            t2.transform.translation.x = self.robot_x
+            t2.transform.translation.y = self.robot_y
+            t2.transform.translation.z = 0.0
+            q = tft.quaternion_from_euler(0, 0, self.robot_yaw)
+            t2.transform.rotation.x = q[0]
+            t2.transform.rotation.y = q[1]
+            t2.transform.rotation.z = q[2]
+            t2.transform.rotation.w = q[3]
+            self.tf_broadcaster.sendTransform(t2)
     
     def apply_decay(self):
         now = rospy.Time.now()
