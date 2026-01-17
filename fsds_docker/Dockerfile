@@ -68,16 +68,15 @@ RUN pip3 install --no-cache-dir airsim==1.8.1
 # ===========================================
 WORKDIR /root
 
-# Clone FSDS Repository (use latest main branch for CI compatibility)
+# Clone FSDS Repository for ROS messages only (skip AirLib C++ build)
 RUN git clone https://github.com/FS-Driverless/Formula-Student-Driverless-Simulator.git \
     --recurse-submodules --depth 1
 
-# Build AirLib
-WORKDIR /root/Formula-Student-Driverless-Simulator/AirSim
-RUN ./setup.sh && ./build.sh
+# Setup Catkin Workspace with fs_msgs only
+WORKDIR /root/catkin_ws/src
+RUN ln -s /root/Formula-Student-Driverless-Simulator/ros/src/fs_msgs .
 
-# Setup Catkin Workspace
-WORKDIR /root/Formula-Student-Driverless-Simulator/ros
+WORKDIR /root/catkin_ws
 RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
     catkin init && \
     catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release && \
@@ -93,7 +92,7 @@ WORKDIR /root/catkin_ws
 # Environment Setup
 # ===========================================
 RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc && \
-    echo "source /root/Formula-Student-Driverless-Simulator/ros/devel/setup.bash" >> ~/.bashrc && \
+    echo "source /root/catkin_ws/devel/setup.bash" >> ~/.bashrc && \
     echo "export ROS_MASTER_URI=\${ROS_MASTER_URI:-http://localhost:11311}" >> ~/.bashrc
 
 # Entry point
