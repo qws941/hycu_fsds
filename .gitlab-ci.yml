@@ -39,6 +39,8 @@ docker-build:
     - docker tag $IMAGE_NAME:$CI_COMMIT_SHORT_SHA $IMAGE_NAME:latest
   only:
     - master
+  tags:
+    - docker-socket
 
 auto-release:
   stage: release
