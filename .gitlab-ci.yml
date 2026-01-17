@@ -30,9 +30,9 @@ dockerfile-lint:
 
 docker-build:
   stage: build
-  image: docker:24-dind
-  services:
-    - docker:24-dind
+  image: docker:24-cli
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
   script:
     - cd fsds_docker
     - docker build -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
