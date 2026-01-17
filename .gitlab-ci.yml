@@ -1,48 +1,78 @@
 stages:
   - validate
   - build
+  - release
+  - notify
 
 variables:
   DOCKER_DRIVER: overlay2
   DOCKER_TLS_CERTDIR: ""
+  IMAGE_NAME: fsds-hycu
 
-# Python syntax validation
 syntax-check:
   stage: validate
   image: python:3.8-slim
   script:
-    - echo "Checking Python syntax..."
     - python3 -m py_compile fsds_docker/scripts/*.py
-    - echo "All Python files passed syntax check"
   only:
     - master
     - merge_requests
 
-# Dockerfile validation (lint)
 dockerfile-lint:
   stage: validate
   image: hadolint/hadolint:latest-debian
   script:
-    - echo "Linting Dockerfile..."
     - hadolint fsds_docker/Dockerfile --ignore DL3008 --ignore DL3013 || true
   allow_failure: true
   only:
     - master
     - merge_requests
 
-# Docker build test
 docker-build:
   stage: build
   image: docker:24-dind
   services:
     - docker:24-dind
-  before_script:
-    - docker info
   script:
-    - echo "Building Docker image..."
     - cd fsds_docker
-    - docker build -t fsds-test:$CI_COMMIT_SHORT_SHA .
-    - echo "Docker build successful"
+    - docker build -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
+    - docker tag $IMAGE_NAME:$CI_COMMIT_SHORT_SHA $IMAGE_NAME:latest
+  only:
+    - master
+
+auto-release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  script:
+    - echo "Creating release for $CI_COMMIT_SHORT_SHA"
+  release:
+    tag_name: v1.0.$CI_PIPELINE_IID
+    description: "Auto-release from pipeline $CI_PIPELINE_ID"
+    ref: $CI_COMMIT_SHA
   only:
     - master
   when: manual
+
+notify-success:
+  stage: notify
+  image: curlimages/curl:latest
+  script:
+    - |
+      curl -H "Content-Type: application/json" \
+           -d "{\"content\": \"✅ **Pipeline #$CI_PIPELINE_ID** succeeded\\n📦 Commit: \`$CI_COMMIT_SHORT_SHA\`\\n🔗 $CI_PIPELINE_URL\"}" \
+           "$DISCORD_WEBHOOK_URL" || true
+  only:
+    - master
+  when: on_success
+
+notify-failure:
+  stage: notify
+  image: curlimages/curl:latest
+  script:
+    - |
+      curl -H "Content-Type: application/json" \
+           -d "{\"content\": \"❌ **Pipeline #$CI_PIPELINE_ID** failed\\n📦 Commit: \`$CI_COMMIT_SHORT_SHA\`\\n🔗 $CI_PIPELINE_URL\"}" \
+           "$DISCORD_WEBHOOK_URL" || true
+  only:
+    - master
+  when: on_failure
