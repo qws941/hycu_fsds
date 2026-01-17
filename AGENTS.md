@@ -1,7 +1,7 @@
 # FSDS AUTONOMOUS DRIVING - PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-01-16
-**Commit:** b1aaa03
+**Generated:** 2026-01-17
+**Commit:** 2cbb961
 **Branch:** master
 
 ## OVERVIEW
@@ -118,3 +118,4 @@ docker-compose down
 - ROS Bridge connects via port 41451
 - Container scripts auto-mounted from `./scripts/` - edit on host, run in container
 - `competition_driver.py` is the main submission for the competition
+- `submission/` directory is a duplicate of `fsds_docker/` for packaging - ignore for development

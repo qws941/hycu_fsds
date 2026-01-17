@@ -1,0 +1,48 @@
+stages:
+  - validate
+  - build
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+
+# Python syntax validation
+syntax-check:
+  stage: validate
+  image: python:3.8-slim
+  script:
+    - echo "Checking Python syntax..."
+    - python3 -m py_compile fsds_docker/scripts/*.py
+    - echo "All Python files passed syntax check"
+  only:
+    - master
+    - merge_requests
+
+# Dockerfile validation (lint)
+dockerfile-lint:
+  stage: validate
+  image: hadolint/hadolint:latest-debian
+  script:
+    - echo "Linting Dockerfile..."
+    - hadolint fsds_docker/Dockerfile --ignore DL3008 --ignore DL3013 || true
+  allow_failure: true
+  only:
+    - master
+    - merge_requests
+
+# Docker build test
+docker-build:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - docker info
+  script:
+    - echo "Building Docker image..."
+    - cd fsds_docker
+    - docker build -t fsds-test:$CI_COMMIT_SHORT_SHA .
+    - echo "Docker build successful"
+  only:
+    - master
+  when: manual
