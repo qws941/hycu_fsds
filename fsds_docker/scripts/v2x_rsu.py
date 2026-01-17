@@ -2,23 +2,80 @@
 """
 V2X Virtual RSU (Roadside Unit) Node
 =====================================
-Simulates V2X infrastructure broadcasting messages to vehicles.
 
+이 모듈은 V2X (Vehicle-to-Everything) 통신을 시뮬레이션하여
+도로변 인프라(RSU)에서 차량으로 교통 정보를 전송합니다.
+
+V2X 표준 메시지 대응 (Standards Mapping)
+-----------------------------------------
+본 구현의 메시지는 실제 V2X 표준과 다음과 같이 대응됩니다:
+
++------------------+------------------------+------------------------+
+| 본 구현          | SAE J2735 (US/DSRC)    | ETSI (EU/C-ITS)        |
++------------------+------------------------+------------------------+
+| speed_limit      | IVI (In-Vehicle        | IVI (Infrastructure    |
+|                  | Information)           | to Vehicle Info)       |
+|                  | - speedLimitType       | - ISO/TS 19091         |
++------------------+------------------------+------------------------+
+| hazard           | TIM (Traveler          | DENM (Decentralized    |
+|                  | Information Message)   | Environmental          |
+|                  | - roadSignType         | Notification Message)  |
+|                  |                        | - ETSI EN 302 637-3    |
++------------------+------------------------+------------------------+
+| stop_zone        | TIM + BSM extension    | DENM (causeCode:       |
+|                  | - workZone             | trafficCondition)      |
+|                  | - closedLane           | + SPATEM (Signal       |
+|                  |                        | Phase and Timing)      |
++------------------+------------------------+------------------------+
+| rsu_status       | RSA (Road Side Alert)  | CAM (Cooperative       |
+| (JSON)           | + PSM (Personal        | Awareness Message)     |
+|                  | Safety Message)        | + DENM aggregation     |
++------------------+------------------------+------------------------+
+
+메시지 형식 (Message Format)
+-----------------------------
+/v2x/rsu_status는 JSON 형식으로 다음 필드를 포함합니다:
+{
+    "timestamp": 1737123456.789,  // Unix timestamp (초)
+    "scenario": "normal",
+    "speed_limit": 6.0,           // m/s
+    "hazard": false,
+    "stop_zone": false
+}
+
+참고문헌 (References)
+---------------------
+- SAE J2735:2022 - V2X Communications Message Set Dictionary
+- SAE J2945/1 - On-Board System Requirements for V2V Safety Communications
+- ETSI EN 302 637-2 - V2X Basic Set of Applications; CAM
+- ETSI EN 302 637-3 - V2X Basic Set of Applications; DENM
+- ISO 19091:2019 - Using V2I/I2V for Intersection Applications
+
+Demo Scenarios
+--------------
++------------+-------------+--------+-----------+---------------------+
+| Scenario   | speed_limit | hazard | stop_zone | Description         |
++------------+-------------+--------+-----------+---------------------+
+| normal     | 6.0 m/s     | false  | false     | 정상 주행           |
+| slow_zone  | 3.0 m/s     | false  | false     | 속도 제한 구역      |
+| hazard     | 6.0 m/s     | true   | false     | 위험 경고 (50% 감속)|
+| stop       | 6.0 m/s     | false  | true      | 정지 구역           |
+| emergency  | 2.0 m/s     | true   | false     | 긴급 상황           |
++------------+-------------+--------+-----------+---------------------+
+
+ROS Interface
+-------------
 Published Topics:
-    /v2x/speed_limit (Float32): Current speed limit in m/s
-    /v2x/hazard (Bool): Hazard warning flag
-    /v2x/stop_zone (Bool): Stop zone active flag
-
-Demo Scenarios:
-    1. Normal: speed_limit=6.0, no hazard, no stop
-    2. Speed Limit Zone: speed_limit=3.0
-    3. Hazard Warning: hazard=True (vehicle slows to 50%)
-    4. Stop Zone: stop_zone=True (vehicle stops)
+    /v2x/speed_limit (std_msgs/Float32): 속도 제한 (m/s)
+    /v2x/hazard (std_msgs/Bool): 위험 경고 플래그
+    /v2x/stop_zone (std_msgs/Bool): 정지 구역 플래그
+    /v2x/rsu_status (std_msgs/String): 통합 상태 (JSON with timestamp)
 
 Usage:
-    rosrun fsds_scripts v2x_rsu.py
-    rosrun fsds_scripts v2x_rsu.py --scenario hazard
-    rosrun fsds_scripts v2x_rsu.py --interactive
+    rosrun fsds_scripts v2x_rsu.py                    # Normal mode
+    rosrun fsds_scripts v2x_rsu.py --scenario hazard  # Specific scenario
+    rosrun fsds_scripts v2x_rsu.py --interactive      # Interactive control
+    rosrun fsds_scripts v2x_rsu.py --demo             # Auto-cycling demo
 """
 
 import rospy
@@ -26,6 +83,8 @@ from std_msgs.msg import Float32, Bool, String
 import argparse
 import sys
 import threading
+import time
+import json
 
 
 class V2XVirtualRSU:
@@ -125,7 +184,14 @@ class V2XVirtualRSU:
         self.hazard_pub.publish(Bool(hazard))
         self.stop_zone_pub.publish(Bool(stop))
         
-        status = f"scenario={scenario},speed_limit={speed:.1f},hazard={hazard},stop={stop}"
+        # JSON format with timestamp for V2X standard compliance
+        status = json.dumps({
+            "timestamp": time.time(),
+            "scenario": scenario,
+            "speed_limit": speed,
+            "hazard": hazard,
+            "stop_zone": stop
+        })
         self.status_pub.publish(String(status))
         
     def run(self):
