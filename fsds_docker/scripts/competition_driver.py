@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import rospy
+import threading
+from collections import deque
 import numpy as np
 from math import atan2, sqrt
 from enum import Enum
@@ -108,10 +110,18 @@ class CompetitionDriver:
         self.odom_received = False
         
         self.commentary_history = []
+        self.data_lock = threading.Lock()
+        
+        # Cached params for hot path (avoid rospy.get_param every cycle)
+        self.max_lateral_accel = rospy.get_param('~max_lateral_accel', 4.0)
+        self.last_log_time = 0.0
         
     def v2x_speed_limit_callback(self, msg):
-        self.v2x_speed_limit = msg.data
-        self.add_commentary(f"V2X: speed limit {msg.data:.1f} m/s")
+        if np.isfinite(msg.data) and msg.data >= 0:
+            self.v2x_speed_limit = msg.data
+            self.add_commentary(f"V2X: speed limit {msg.data:.1f} m/s")
+        else:
+            rospy.logwarn_throttle(1.0, f"V2X: invalid speed_limit {msg.data}, ignored")
         
     def v2x_hazard_callback(self, msg):
         if msg.data != self.v2x_hazard:
@@ -174,10 +184,10 @@ class CompetitionDriver:
                 continue
             
             cluster_indices = []
-            queue = [cell_key]
+            queue = deque([cell_key])
             
             while queue:
-                current = queue.pop(0)
+                current = queue.popleft()
                 if current in visited_cells:
                     continue
                 if current not in grid:
@@ -320,18 +330,18 @@ class CompetitionDriver:
         return np.mean(self.curvature_history)
     
     def calculate_target_speed(self, curvature):
-        max_lateral_accel = rospy.get_param('~max_lateral_accel', 4.0)
-        speed = np.sqrt(max_lateral_accel / (abs(curvature) + 0.01))
+        speed = np.sqrt(self.max_lateral_accel / (abs(curvature) + 0.01))
         speed = np.clip(speed, self.min_speed, self.max_speed)
         
-        # V2X speed limit (clamp to valid range, 0 means stop)
         if self.v2x_speed_limit <= 0:
-            return 0.0  # Signal full stop
+            return 0.0
         speed = min(speed, max(self.v2x_speed_limit, self.min_speed))
         
         if self.v2x_hazard:
             speed = min(speed, self.min_speed)
         
+        if not np.isfinite(speed):
+            return self.min_speed
         return speed
     
     def apply_rate_limit(self, target, current, max_rate):
@@ -357,6 +367,13 @@ class CompetitionDriver:
         if self.v2x_stop_zone:
             self.state = DriveState.STOPPING
             self.stop_reason = StopReason.V2X_STOP_ZONE
+            self.recovery_start_time = None
+            return
+        
+        if self.state == DriveState.STOPPING and self.stop_reason in [StopReason.V2X_STOP_ZONE, StopReason.EMERGENCY_STOP]:
+            self.add_commentary(f"WATCHDOG: {self.stop_reason.name} cleared, resuming DEGRADED")
+            self.state = DriveState.DEGRADED
+            self.stop_reason = StopReason.NONE
             self.recovery_start_time = None
             return
         
@@ -435,19 +452,24 @@ class CompetitionDriver:
             points = np.array(list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)))
             
             if len(points) == 0:
-                self.left_cones = []
-                self.right_cones = []
-                self.centerline = []
+                with self.data_lock:
+                    self.left_cones = []
+                    self.right_cones = []
+                    self.centerline = []
                 return
             
             if np.any(np.isnan(points)) or np.any(np.isinf(points)):
                 points = points[~np.isnan(points).any(axis=1) & ~np.isinf(points).any(axis=1)]
             
-            self.left_cones, self.right_cones = self.find_cones_filtered(points)
-            self.centerline = self.build_centerline(self.left_cones, self.right_cones)
+            left, right = self.find_cones_filtered(points)
+            center = self.build_centerline(left, right)
             
-            if self.centerline:
-                self.last_valid_centerline = self.centerline
+            with self.data_lock:
+                self.left_cones = left
+                self.right_cones = right
+                self.centerline = center
+                if center:
+                    self.last_valid_centerline = center
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"LiDAR callback error: {e}")
     
@@ -457,7 +479,11 @@ class CompetitionDriver:
             self.odom_received = True
             vx = msg.twist.twist.linear.x
             vy = msg.twist.twist.linear.y
-            self.current_speed = sqrt(vx**2 + vy**2)
+            speed = sqrt(vx**2 + vy**2)
+            if np.isfinite(speed):
+                self.current_speed = speed
+            else:
+                rospy.logwarn_throttle(1.0, "Odom NaN/Inf detected, using last valid speed")
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"Odom callback error: {e}")
     
@@ -542,13 +568,20 @@ class CompetitionDriver:
                         continue
                 
                 self.check_watchdog()
-                self.update_state(self.left_cones, self.right_cones)
+                
+                with self.data_lock:
+                    left_snapshot = list(self.left_cones)
+                    right_snapshot = list(self.right_cones)
+                
+                self.update_state(left_snapshot, right_snapshot)
                 
                 cmd = self.compute_control()
                 self.cmd_pub.publish(cmd)
                 self.publish_telemetry()
                 
-                if rospy.Time.now().to_sec() % 2 < 0.1:
+                now_sec = rospy.Time.now().to_sec()
+                if now_sec - self.last_log_time >= 2.0:
+                    self.last_log_time = now_sec
                     rospy.loginfo(f"[{self.state.name}] Speed: {self.current_speed:.1f}/{self.current_target_speed:.1f} m/s | "
                                  f"Steer: {self.current_steering:.2f} | L:{len(self.left_cones)} R:{len(self.right_cones)}")
             except Exception as e:

@@ -19,6 +19,7 @@ class SimpleSLAM:
         self.map_origin = -self.map_size * self.map_resolution / 2
         self.decay_rate = rospy.get_param('~decay_rate', 2)
         self.decay_interval = rospy.get_param('~decay_interval', 1.0)
+        self.publish_base_link_tf = rospy.get_param('~publish_base_link_tf', False)
         
         self.occupancy_grid = np.zeros((self.map_size, self.map_size), dtype=np.int8)
         self.cone_map = []
@@ -128,19 +129,20 @@ class SimpleSLAM:
         t.transform.rotation.w = 1.0
         self.tf_broadcaster.sendTransform(t)
         
-        t2 = TransformStamped()
-        t2.header.stamp = rospy.Time.now()
-        t2.header.frame_id = "odom"
-        t2.child_frame_id = "base_link"
-        t2.transform.translation.x = self.robot_x
-        t2.transform.translation.y = self.robot_y
-        t2.transform.translation.z = 0.0
-        q = tft.quaternion_from_euler(0, 0, self.robot_yaw)
-        t2.transform.rotation.x = q[0]
-        t2.transform.rotation.y = q[1]
-        t2.transform.rotation.z = q[2]
-        t2.transform.rotation.w = q[3]
-        self.tf_broadcaster.sendTransform(t2)
+        if self.publish_base_link_tf:
+            t2 = TransformStamped()
+            t2.header.stamp = rospy.Time.now()
+            t2.header.frame_id = "odom"
+            t2.child_frame_id = "base_link"
+            t2.transform.translation.x = self.robot_x
+            t2.transform.translation.y = self.robot_y
+            t2.transform.translation.z = 0.0
+            q = tft.quaternion_from_euler(0, 0, self.robot_yaw)
+            t2.transform.rotation.x = q[0]
+            t2.transform.rotation.y = q[1]
+            t2.transform.rotation.z = q[2]
+            t2.transform.rotation.w = q[3]
+            self.tf_broadcaster.sendTransform(t2)
     
     def apply_decay(self):
         now = rospy.Time.now()

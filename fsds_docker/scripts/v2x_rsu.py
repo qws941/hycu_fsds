@@ -71,6 +71,7 @@ class V2XVirtualRSU:
         self.stop_zone_pub = rospy.Publisher('/v2x/stop_zone', Bool, queue_size=1)
         self.status_pub = rospy.Publisher('/v2x/rsu_status', String, queue_size=1)
         
+        self.data_lock = threading.Lock()
         self.speed_limit = 6.0
         self.hazard = False
         self.stop_zone = False
@@ -89,32 +90,42 @@ class V2XVirtualRSU:
             scenario_name = 'normal'
             
         scenario = self.SCENARIOS[scenario_name]
-        self.speed_limit = scenario['speed_limit']
-        self.hazard = scenario['hazard']
-        self.stop_zone = scenario['stop_zone']
-        self.current_scenario = scenario_name
+        with self.data_lock:
+            self.speed_limit = scenario['speed_limit']
+            self.hazard = scenario['hazard']
+            self.stop_zone = scenario['stop_zone']
+            self.current_scenario = scenario_name
         
         rospy.loginfo(f"[V2X RSU] Scenario: {scenario_name} - {scenario['description']}")
-        rospy.loginfo(f"  speed_limit={self.speed_limit} m/s, hazard={self.hazard}, stop_zone={self.stop_zone}")
+        rospy.loginfo(f"  speed_limit={scenario['speed_limit']} m/s, hazard={scenario['hazard']}, stop_zone={scenario['stop_zone']}")
         
     def set_speed_limit(self, limit):
-        self.speed_limit = max(0.0, min(limit, 10.0))
+        with self.data_lock:
+            self.speed_limit = max(0.0, min(limit, 10.0))
         rospy.loginfo(f"[V2X RSU] Speed limit set to {self.speed_limit} m/s")
         
     def set_hazard(self, active):
-        self.hazard = bool(active)
+        with self.data_lock:
+            self.hazard = bool(active)
         rospy.loginfo(f"[V2X RSU] Hazard {'ACTIVE' if self.hazard else 'cleared'}")
         
     def set_stop_zone(self, active):
-        self.stop_zone = bool(active)
+        with self.data_lock:
+            self.stop_zone = bool(active)
         rospy.loginfo(f"[V2X RSU] Stop zone {'ACTIVE' if self.stop_zone else 'cleared'}")
         
     def publish_messages(self):
-        self.speed_limit_pub.publish(Float32(self.speed_limit))
-        self.hazard_pub.publish(Bool(self.hazard))
-        self.stop_zone_pub.publish(Bool(self.stop_zone))
+        with self.data_lock:
+            speed = self.speed_limit
+            hazard = self.hazard
+            stop = self.stop_zone
+            scenario = self.current_scenario
         
-        status = f"scenario={self.current_scenario},speed_limit={self.speed_limit:.1f},hazard={self.hazard},stop={self.stop_zone}"
+        self.speed_limit_pub.publish(Float32(speed))
+        self.hazard_pub.publish(Bool(hazard))
+        self.stop_zone_pub.publish(Bool(stop))
+        
+        status = f"scenario={scenario},speed_limit={speed:.1f},hazard={hazard},stop={stop}"
         self.status_pub.publish(String(status))
         
     def run(self):
