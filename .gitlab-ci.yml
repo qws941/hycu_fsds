@@ -30,7 +30,7 @@ dockerfile-lint:
 
 docker-build:
   stage: build
-  image: docker:24-cli
+  image: docker:27-cli
   variables:
     DOCKER_HOST: unix:///var/run/docker.sock
   script:
