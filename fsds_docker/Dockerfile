@@ -59,8 +59,9 @@ RUN pip3 install --no-cache-dir \
     scipy==1.10.1 \
     matplotlib==3.7.2 \
     opencv-python==4.8.0.74 \
-    msgpack-rpc-python==0.4.1 \
-    airsim==1.8.1
+    msgpack-rpc-python==0.4.1
+
+RUN pip3 install --no-cache-dir airsim==1.8.1
 
 # ===========================================
 # ROS Workspace Setup
