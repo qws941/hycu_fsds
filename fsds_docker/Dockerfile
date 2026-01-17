@@ -68,12 +68,9 @@ RUN pip3 install --no-cache-dir airsim==1.8.1
 # ===========================================
 WORKDIR /root
 
-# Clone FSDS Repository (pinned to known-good commit)
+# Clone FSDS Repository (use latest main branch for CI compatibility)
 RUN git clone https://github.com/FS-Driverless/Formula-Student-Driverless-Simulator.git \
-    --recurse-submodules --depth 1 && \
-    cd Formula-Student-Driverless-Simulator && \
-    git fetch --depth 1 origin e8a92d8 && \
-    git checkout e8a92d8
+    --recurse-submodules --depth 1
 
 # Build AirLib
 WORKDIR /root/Formula-Student-Driverless-Simulator/AirSim
