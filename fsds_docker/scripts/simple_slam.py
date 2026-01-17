@@ -96,7 +96,9 @@ class SimpleSLAM:
         self.decay_interval = rospy.get_param('~decay_interval', 1.0)
         self.publish_base_link_tf = rospy.get_param('~publish_base_link_tf', False)
         
-        self.occupancy_grid = np.zeros((self.map_size, self.map_size), dtype=np.int8)
+        # Initialize with -1 (unknown) per ROS OccupancyGrid convention
+        # Values: -1=unknown, 0=free, 100=occupied
+        self.occupancy_grid = np.full((self.map_size, self.map_size), -1, dtype=np.int8)
         self.cone_map = []
         
         self.robot_x = 0.0

@@ -227,20 +227,24 @@ class InteractiveController:
         self.running = True
         
     def print_help(self):
-        print("\n=== V2X RSU Interactive Controls ===")
-        print("Scenarios:")
-        print("  1 - Normal (speed=6.0, no warnings)")
-        print("  2 - Slow Zone (speed=3.0)")
-        print("  3 - Hazard Warning")
-        print("  4 - Stop Zone")
-        print("  5 - Emergency (slow + hazard)")
-        print("\nManual Controls:")
-        print("  s <value> - Set speed limit (e.g., 's 4.0')")
-        print("  h         - Toggle hazard")
-        print("  x         - Toggle stop zone")
-        print("  r         - Reset to normal")
-        print("  q         - Quit")
-        print("=====================================\n")
+        help_text = """
+=== V2X RSU Interactive Controls ===
+Scenarios:
+  1 - Normal (speed=6.0, no warnings)
+  2 - Slow Zone (speed=3.0)
+  3 - Hazard Warning
+  4 - Stop Zone
+  5 - Emergency (slow + hazard)
+
+Manual Controls:
+  s <value> - Set speed limit (e.g., 's 4.0')
+  h         - Toggle hazard
+  x         - Toggle stop zone
+  r         - Reset to normal
+  q         - Quit
+=====================================
+"""
+        print(help_text)
         
     def run(self):
         self.print_help()
@@ -279,11 +283,11 @@ class InteractiveController:
                         val = float(cmd[2:])
                         self.rsu.set_speed_limit(val)
                     except ValueError:
-                        print("Invalid speed value")
+                            rospy.logwarn("Invalid speed value")
                 elif cmd == 'help' or cmd == '?':
                     self.print_help()
                 else:
-                    print(f"Unknown command: {cmd}. Type 'help' for available commands.")
+                    rospy.loginfo(f"Unknown command: {cmd}. Type 'help' for available commands.")
                     
             except EOFError:
                 break
