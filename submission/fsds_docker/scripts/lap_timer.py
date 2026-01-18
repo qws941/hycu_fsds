@@ -47,7 +47,7 @@ class LapTimer:
             vx = msg.twist.twist.linear.x
             vy = msg.twist.twist.linear.y
             
-            if not all(map(lambda v: isinstance(v, (int, float)) and not (v != v), [x, y, vx, vy])):
+            if not np.isfinite([x, y, vx, vy]).all():
                 return
             
             self.current_speed = sqrt(vx**2 + vy**2)

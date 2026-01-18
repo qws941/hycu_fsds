@@ -406,7 +406,8 @@ class CompetitionDriver:
         
         if self.v2x_speed_limit <= 0:
             return 0.0
-        speed = min(speed, max(self.v2x_speed_limit, self.min_speed))
+        speed = min(speed, self.v2x_speed_limit)
+        speed = max(0.0, speed)
         
         if self.v2x_hazard:
             speed = min(speed, self.min_speed)

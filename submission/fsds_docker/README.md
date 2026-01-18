@@ -300,16 +300,16 @@ docker logs -f fsds_cone_classifier
 **Lap Timer 출력 토픽:**
 | 토픽 | 타입 | 설명 |
 |------|------|------|
-| `/lap/time` | Float32 | 현재 랩타임 (초) |
+| `/lap/current_time` | Float32 | 현재 랩타임 (초) |
 | `/lap/count` | Int32 | 완료된 랩 수 |
 | `/lap/distance` | Float32 | 총 주행 거리 (m) |
+| `/lap/best_time` | Float32 | 최고 랩타임 (초) |
+| `/lap/avg_speed` | Float32 | 평균 속도 (m/s) |
 
 **Cone Classifier 출력 토픽:**
 | 토픽 | 타입 | 설명 |
 |------|------|------|
 | `/cones/markers` | MarkerArray | RViz 시각화 마커 |
-| `/cones/blue` | PointCloud2 | 파란색 콘 포인트 |
-| `/cones/yellow` | PointCloud2 | 노란색 콘 포인트 |
 
 ### 3. SLAM + V2X (가산점)
 

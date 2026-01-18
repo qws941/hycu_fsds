@@ -146,7 +146,7 @@ class ConeClassifier:
         marker.header.stamp = rospy.Time.now()
         marker.ns = "cones"
         marker.id = marker_id
-        marker.type = Marker.CONE
+        marker.type = Marker.CYLINDER
         marker.action = Marker.ADD
         
         marker.pose.position.x = cone['x']
