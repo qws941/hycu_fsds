@@ -157,6 +157,60 @@ fsds_docker/
 | DEGRADED | 1초 이상 콘 미탐지 | 마지막 centerline 유지 + 최저 속도 |
 | STOPPING | 3초 이상 콘 미탐지 | 완전 정지 |
 
+### Pure Pursuit 알고리즘
+
+```mermaid
+graph LR
+    subgraph "입력"
+        LIDAR[LiDAR PointCloud]
+        ODOM[Odometry]
+    end
+    
+    subgraph "콘 검출"
+        FILTER[Z-필터<br/>-0.3m ~ 0.5m]
+        CLUSTER[DBSCAN 클러스터링]
+        SPLIT[좌/우 분리<br/>y > 0: 좌측]
+    end
+    
+    subgraph "경로 계획"
+        CENTER[Centerline 계산<br/>좌+우 평균]
+        LOOKAHEAD[Lookahead Point<br/>4.0m 전방]
+    end
+    
+    subgraph "제어"
+        STEER[Pure Pursuit<br/>δ = atan2(2L·sin α, ld)]
+        SPEED[곡률 속도<br/>v = max - k·κ]
+    end
+    
+    LIDAR --> FILTER --> CLUSTER --> SPLIT
+    SPLIT --> CENTER --> LOOKAHEAD
+    ODOM --> LOOKAHEAD
+    LOOKAHEAD --> STEER --> CMD[ControlCommand]
+    CENTER --> SPEED --> CMD
+```
+
+### 파라미터 튜닝 가이드
+
+| 증상 | 조정 파라미터 | 방향 |
+|------|---------------|------|
+| 코너에서 벗어남 | `lookahead_base` | ↓ 감소 (3.0m) |
+| 주행이 불안정 | `lookahead_base` | ↑ 증가 (5.0m) |
+| 속도가 너무 느림 | `max_speed` | ↑ 증가 (8.0 m/s) |
+| 급커브에서 미끄러짐 | `curvature_speed_factor` | ↑ 증가 |
+| 콘 미검출 | `cones_range_cutoff` | ↑ 증가 (15.0m) |
+| 노이즈 콘 검출 | `cone_min_z` / `cone_max_z` | 범위 축소 |
+| 조향 부족 | `max_steering` | ↑ 증가 (0.5) |
+
+```python
+# 파라미터 위치: competition_driver.py __init__()
+self.max_throttle = 0.25        # 가속 강도
+self.min_speed = 2.0            # 최저 속도 (m/s)
+self.max_speed = 6.0            # 최고 속도 (m/s)
+self.max_steering = 0.4         # 최대 조향각
+self.lookahead_base = 4.0       # 전방 주시 거리 (m)
+self.cones_range_cutoff = 12.0  # 콘 탐지 범위 (m)
+```
+
 ## SLAM (simple_slam.py)
 
 별도 터미널에서 실행:

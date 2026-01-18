@@ -70,6 +70,38 @@ Visualization Manager:
       Shaft Length: 0.1
       Topic: /slam/path
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Name: Cone Markers
+      Topic: /cones/markers
+      Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz/Path
+      Color: 255; 255; 0
+      Enabled: true
+      Line Style: Lines
+      Line Width: 0.05
+      Name: Centerline
+      Topic: /debug/centerline
+      Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Name: Lookahead Point
+      Topic: /debug/lookahead
+      Value: true
+    - Class: rviz/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+      Value: true
     - Alpha: 1
       Class: rviz/Odometry
       Color: 255; 25; 0
