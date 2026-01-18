@@ -580,6 +580,12 @@ class CompetitionDriver:
             return cmd
         
         if self.state == DriveState.DEGRADED:
+            if not last_valid_centerline_snapshot:
+                cmd.throttle = 0.0
+                cmd.steering = 0.0
+                cmd.brake = 1.0
+                self.current_target_speed = 0.0
+                return cmd
             centerline = last_valid_centerline_snapshot
             self.current_target_speed = self.min_speed
             speed_error = self.current_speed - self.current_target_speed
@@ -629,7 +635,7 @@ class CompetitionDriver:
                 if not self.sensors_ready:
                     if self.lidar_received and self.odom_received:
                         self.sensors_ready = True
-                        self.add_commentary("Sensors ready, starting autonomous control")
+                        self.add_commentary("Sensors ready, waiting for first valid centerline")
                     else:
                         cmd = ControlCommand()
                         cmd.throttle = 0.0
@@ -638,6 +644,18 @@ class CompetitionDriver:
                         self.cmd_pub.publish(cmd)
                         rate.sleep()
                         continue
+                
+                with self.data_lock:
+                    has_valid_centerline = len(self.last_valid_centerline) > 0
+                
+                if not has_valid_centerline:
+                    cmd = ControlCommand()
+                    cmd.throttle = 0.0
+                    cmd.steering = 0.0
+                    cmd.brake = 1.0
+                    self.cmd_pub.publish(cmd)
+                    rate.sleep()
+                    continue
                 
                 self.check_watchdog()
                 
