@@ -152,7 +152,11 @@ class SimpleSLAM:
                 grid_y = int((world_y - self.map_origin) / self.map_resolution)
                 
                 if 0 <= grid_x < self.map_size and 0 <= grid_y < self.map_size:
-                    self.occupancy_grid[grid_y, grid_x] = min(100, self.occupancy_grid[grid_y, grid_x] + 10)
+                    current = self.occupancy_grid[grid_y, grid_x]
+                    # If unknown (-1), start from 0 before incrementing
+                    if current < 0:
+                        current = 0
+                    self.occupancy_grid[grid_y, grid_x] = min(100, current + 10)
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"Lidar callback error: {e}")
     
@@ -224,7 +228,10 @@ class SimpleSLAM:
     def apply_decay(self):
         now = rospy.Time.now()
         if (now - self.last_decay_time).to_sec() >= self.decay_interval:
-            self.occupancy_grid = np.maximum(0, self.occupancy_grid - self.decay_rate)
+            # Only decay cells that have been observed (value >= 0)
+            # Preserve unknown cells (-1) as unknown
+            observed_mask = self.occupancy_grid >= 0
+            self.occupancy_grid[observed_mask] = np.maximum(0, self.occupancy_grid[observed_mask] - self.decay_rate)
             self.last_decay_time = now
     
     def run(self):

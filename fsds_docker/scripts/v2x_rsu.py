@@ -85,6 +85,7 @@ import sys
 import threading
 import time
 import json
+import signal
 
 
 class V2XVirtualRSU:
@@ -184,15 +185,17 @@ class V2XVirtualRSU:
         self.hazard_pub.publish(Bool(hazard))
         self.stop_zone_pub.publish(Bool(stop))
         
-        # JSON format with timestamp for V2X standard compliance
-        status = json.dumps({
-            "timestamp": time.time(),
-            "scenario": scenario,
-            "speed_limit": speed,
-            "hazard": hazard,
-            "stop_zone": stop
-        })
-        self.status_pub.publish(String(status))
+        try:
+            status = json.dumps({
+                "timestamp": time.time(),
+                "scenario": scenario,
+                "speed_limit": speed,
+                "hazard": hazard,
+                "stop_zone": stop
+            })
+            self.status_pub.publish(String(status))
+        except (TypeError, ValueError) as e:
+            rospy.logwarn_throttle(1.0, f"JSON encode error: {e}")
         
     def run(self):
         while not rospy.is_shutdown():
@@ -306,6 +309,13 @@ def main():
                         help='Run demo sequence cycling through scenarios')
     
     args, _ = parser.parse_known_args()
+    
+    def signal_handler(signum, frame):
+        rospy.loginfo("Received shutdown signal, exiting gracefully...")
+        rospy.signal_shutdown("Signal received")
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     try:
         rsu = V2XVirtualRSU(initial_scenario=args.scenario)
