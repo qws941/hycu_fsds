@@ -217,6 +217,102 @@ python3 /root/catkin_ws/src/fsds_scripts/scripts/v2x_rsu.py -d
 ./preflight_check.sh
 ```
 
+## 전체 데모 시나리오
+
+경진대회 심사를 위한 전체 시스템 데모 시나리오입니다.
+
+### 1. 기본 실행 (필수)
+
+```bash
+# Terminal 1: Docker 환경 시작
+./start.sh
+
+# Terminal 2: 경진대회 드라이버 실행
+docker exec -it fsds_dev bash
+python3 /root/catkin_ws/src/fsds_scripts/scripts/competition_driver.py
+```
+
+### 2. 모니터링 서비스 (선택)
+
+```bash
+# 랩타임 + 콘 분류 서비스 시작
+docker-compose --profile monitoring up -d
+
+# 로그 확인
+docker logs -f fsds_lap_timer
+docker logs -f fsds_cone_classifier
+```
+
+**Lap Timer 출력 토픽:**
+| 토픽 | 타입 | 설명 |
+|------|------|------|
+| `/lap/time` | Float32 | 현재 랩타임 (초) |
+| `/lap/count` | Int32 | 완료된 랩 수 |
+| `/lap/distance` | Float32 | 총 주행 거리 (m) |
+
+**Cone Classifier 출력 토픽:**
+| 토픽 | 타입 | 설명 |
+|------|------|------|
+| `/cones/markers` | MarkerArray | RViz 시각화 마커 |
+| `/cones/blue` | PointCloud2 | 파란색 콘 포인트 |
+| `/cones/yellow` | PointCloud2 | 노란색 콘 포인트 |
+
+### 3. SLAM + V2X (가산점)
+
+```bash
+# Terminal 3: SLAM
+docker exec -it fsds_dev bash
+python3 /root/catkin_ws/src/fsds_scripts/scripts/simple_slam.py
+
+# Terminal 4: V2X RSU (인터랙티브 모드)
+docker exec -it fsds_dev bash
+python3 /root/catkin_ws/src/fsds_scripts/scripts/v2x_rsu.py -i
+```
+
+### 4. 시각화
+
+```bash
+# RViz (X11 필요)
+docker-compose --profile viz up -d rviz
+
+# Web Dashboard (브라우저)
+docker-compose --profile dashboard up -d rosbridge
+# 브라우저에서 dashboard.html 열기
+```
+
+## Web Dashboard
+
+`dashboard.html`은 rosbridge를 통해 실시간 차량 상태를 모니터링하는 웹 UI입니다.
+
+### 사용법
+
+```bash
+# 1. rosbridge 서비스 시작
+docker-compose --profile dashboard up -d rosbridge
+
+# 2. 브라우저에서 열기
+xdg-open dashboard.html  # Linux
+open dashboard.html      # macOS
+start dashboard.html     # Windows
+```
+
+### 기능
+
+| 패널 | 데이터 |
+|------|--------|
+| Speed | 현재 속도 (m/s) |
+| Throttle | 스로틀 값 (0-1) |
+| Steering | 조향각 (-1 ~ +1) |
+| State | TRACKING / DEGRADED / STOPPING |
+| V2X | 속도제한, 위험경고, 정지구역 |
+| Map | SLAM 점유격자 시각화 |
+
+### 연결 설정
+
+Dashboard 상단의 연결 URL 기본값: `ws://localhost:9090`
+
+Docker 환경에서 rosbridge 포트가 9090으로 노출됩니다.
+
 ## ROS 토픽
 
 | 토픽 | 타입 | 방향 |

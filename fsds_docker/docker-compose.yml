@@ -124,6 +124,64 @@ services:
       - viz
 
   # ===========================================
+  # Lap Timer (Monitoring)
+  # Tracks lap times, distance, speed stats
+  # ===========================================
+  lap_timer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fsds_lap_timer
+    depends_on:
+      fsds_bridge:
+        condition: service_healthy
+    networks:
+      - fsds_network
+    environment:
+      - ROS_MASTER_URI=http://roscore:11311
+      - ROS_HOSTNAME=lap_timer
+    volumes:
+      - ./scripts:/root/catkin_ws/src/fsds_scripts/scripts:ro
+    command: >
+      bash -c "
+        source /opt/ros/noetic/setup.bash &&
+        source /root/catkin_ws/devel/setup.bash &&
+        python3 /root/catkin_ws/src/fsds_scripts/scripts/lap_timer.py
+      "
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+  # ===========================================
+  # Cone Classifier (Monitoring)
+  # Classifies cones by color, publishes RViz markers
+  # ===========================================
+  cone_classifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fsds_cone_classifier
+    depends_on:
+      fsds_bridge:
+        condition: service_healthy
+    networks:
+      - fsds_network
+    environment:
+      - ROS_MASTER_URI=http://roscore:11311
+      - ROS_HOSTNAME=cone_classifier
+    volumes:
+      - ./scripts:/root/catkin_ws/src/fsds_scripts/scripts:ro
+    command: >
+      bash -c "
+        source /opt/ros/noetic/setup.bash &&
+        source /root/catkin_ws/devel/setup.bash &&
+        python3 /root/catkin_ws/src/fsds_scripts/scripts/cone_classifier.py
+      "
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+  # ===========================================
   # ROS Bridge WebSocket (For Dashboard)
   # ===========================================
   rosbridge:
