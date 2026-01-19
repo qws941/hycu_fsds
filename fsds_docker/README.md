@@ -168,7 +168,7 @@ graph LR
     
     subgraph "콘 검출"
         FILTER[Z-필터<br/>-0.3m ~ 0.5m]
-        CLUSTER[DBSCAN 클러스터링]
+        CLUSTER[Grid 기반 클러스터링]
         SPLIT[좌/우 분리<br/>y > 0: 좌측]
     end
     
@@ -179,7 +179,7 @@ graph LR
     
     subgraph "제어"
         STEER[Pure Pursuit<br/>δ = atan2(2L·sin α, ld)]
-        SPEED[곡률 속도<br/>v = max - k·κ]
+        SPEED[곡률 속도<br/>v = √(a_lat_max / κ)]
     end
     
     LIDAR --> FILTER --> CLUSTER --> SPLIT

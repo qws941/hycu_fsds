@@ -1,0 +1,101 @@
+FSDS 설치 가이드(특강 영상 참조)
+
+# 아래 내용을 settings.json 파일에 추가
+# =============================
+{
+  "RPC": {
+    "Enabled": true,
+    "Port": 41451,
+    "LocalHostIp": "본인 ip 주소 입력"
+  }
+}
+
+
+# =============================
+# Windows (PowerShell) - WSL Ubuntu 20.04 설치
+# 이미 설치되어 있으면 건너뛰기
+# =============================
+wsl --install -d Ubuntu-20.04
+
+
+# =============================
+# Ubuntu 20.04 (WSL 터미널) - ROS Noetic 설치 & 환경설정
+# =============================
+sudo apt update && sudo apt upgrade -y
+sudo sh -c 'echo "deb http://packages.ros.org/ros/ubuntu focal main" > /etc/apt/sources.list.d/ros-latest.list'
+
+sudo apt update
+sudo apt install curl gnupg lsb-release -y
+curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo apt-key add -
+
+sudo apt update
+sudo apt install ros-noetic-desktop-full -y
+
+echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc
+source ~/.bashrc
+
+
+# =============================
+# Ubuntu 20.04 (WSL) - 빌드 도구 및 필수 패키지
+# =============================
+sudo apt install -y \
+  python3-catkin-tools \
+  python3-rosdep \
+  python3-rosinstall \
+  python3-rosinstall-generator \
+  python3-wstool \
+  build-essential
+
+
+# =============================
+# Ubuntu 20.04 (WSL) - rosdep 초기화 (최초 1회)
+# =============================
+sudo rosdep init
+rosdep update
+
+
+# =============================
+# Ubuntu 20.04 (WSL) - FSDS 종속 패키지
+# =============================
+sudo apt install -y \
+  ros-noetic-tf2-geometry-msgs \
+  ros-noetic-rqt-multiplot \
+  ros-noetic-joy \
+  ros-noetic-cv-bridge \
+  ros-noetic-image-transport \
+  libyaml-cpp-dev \
+  libcurl4-openssl-dev
+
+
+# =============================
+# Ubuntu 20.04 (WSL) - FSDS 리포지토리 클론 (v2.2.0 사용)
+# =============================
+cd ~
+git clone https://github.com/FS-Driverless/Formula-Student-Driverless-Simulator.git --recurse-submodules
+cd Formula-Student-Driverless-Simulator
+
+
+# =============================
+# Ubuntu 20.04 (WSL) - AirLib 설정
+# =============================
+cd AirSim
+./setup.sh
+./build.sh
+
+
+# =============================
+# Ubuntu 20.04 (WSL) - Catkin 워크스페이스 빌드
+# =============================
+cd ~/Formula-Student-Driverless-Simulator/ros
+catkin init
+catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release
+catkin build
+
+
+# =============================
+# Ubuntu 20.04 (WSL) - FSDS ROS Bridge 실행
+# host 값에는 Windows의 vEthernet(WSL) IPv4 주소를 넣으세요 (예: 172.20.240.1)
+# =============================
+cd ~/Formula-Student-Driverless-Simulator/ros
+source devel/setup.bash
+roslaunch fsds_ros_bridge fsds_ros_bridge.launch host:=172.20.240.1 port:=41451
