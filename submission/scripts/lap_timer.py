@@ -1,4 +1,27 @@
 #!/usr/bin/env python3
+"""
+Lap Timer - 랩타임 측정 및 주행 통계 수집 노드.
+
+목적:
+    자율주행 차량의 랩타임을 측정하고 거리, 속도 등 주행 통계를 수집합니다.
+    시작점은 첫 위치에서 자동 설정되며, 최소 50m 이동 후 시작점 통과 시 랩 완료.
+
+발행 토픽:
+    /lap/current_time (Float32): 현재 랩 경과 시간 (초)
+    /lap/count (Int32): 완료된 랩 수
+    /lap/distance (Float32): 총 주행 거리 (m)
+    /lap/best_time (Float32): 최고 랩타임 (초)
+    /lap/avg_speed (Float32): 평균 속도 (m/s)
+    /lap/max_speed (Float32): 최고 속도 (m/s)
+    /lap/hud (String): HUD 디스플레이용 포맷팅된 문자열
+
+구독 토픽:
+    /fsds/testing_only/odom (Odometry): 차량 위치 및 속도
+
+사용법:
+    python3 lap_timer.py
+    또는 docker-compose --profile monitoring up
+"""
 import rospy
 import numpy as np
 from math import sqrt
