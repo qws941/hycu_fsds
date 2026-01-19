@@ -2,6 +2,12 @@
 """
 Unit tests for FSDS Competition Driver core algorithms.
 
+NOTE: These are ILLUSTRATIVE tests demonstrating algorithm concepts.
+      The implementations here are simplified versions for testing purposes
+      and may differ from the production code in competition_driver.py.
+      Use these tests to understand the mathematical principles, not as
+      a direct reference for the actual driver implementation.
+
 Tests cover:
 - Pure Pursuit steering calculation
 - Cone filtering and clustering

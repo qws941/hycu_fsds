@@ -69,8 +69,10 @@ RUN pip3 install --no-cache-dir airsim==1.8.1
 WORKDIR /root
 
 # Clone FSDS Repository for ROS messages only (skip AirLib C++ build)
+# Pinned to specific commit for reproducibility
+ARG FSDS_COMMIT=v2.2.0
 RUN git clone https://github.com/FS-Driverless/Formula-Student-Driverless-Simulator.git \
-    --recurse-submodules --depth 1
+    --recurse-submodules --depth 1 --branch ${FSDS_COMMIT}
 
 # Setup Catkin Workspace with fs_msgs only
 WORKDIR /root/catkin_ws/src

@@ -1,4 +1,26 @@
 #!/usr/bin/env python3
+"""
+Cone Classifier - LiDAR 기반 콘 색상 분류 및 시각화 노드.
+
+목적:
+    LiDAR 포인트클라우드에서 콘을 검출하고 intensity 값을 기반으로
+    색상(blue/yellow/orange)을 분류하여 RViz 마커로 시각화합니다.
+
+분류 기준:
+    - Blue cone: intensity < 0.4 (왼쪽 트랙 경계)
+    - Yellow cone: intensity > 0.6 (오른쪽 트랙 경계)
+    - Orange cone: 0.4 <= intensity <= 0.6 (시작/종료 라인)
+
+발행 토픽:
+    /cones/markers (MarkerArray): RViz 시각화용 콘 마커
+
+구독 토픽:
+    /fsds/lidar/Lidar1 (PointCloud2): LiDAR 포인트클라우드
+
+사용법:
+    python3 cone_classifier.py
+    또는 docker-compose --profile monitoring up
+"""
 import rospy
 import numpy as np
 from sensor_msgs.msg import PointCloud2
