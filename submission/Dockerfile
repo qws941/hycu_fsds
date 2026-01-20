@@ -74,9 +74,10 @@ ARG FSDS_COMMIT=v2.2.0
 RUN git clone https://github.com/FS-Driverless/Formula-Student-Driverless-Simulator.git \
     --recurse-submodules --depth 1 --branch ${FSDS_COMMIT}
 
-# Setup Catkin Workspace with fs_msgs only
+# Setup Catkin Workspace with fs_msgs and fsds_ros_bridge
 WORKDIR /root/catkin_ws/src
-RUN ln -s /root/Formula-Student-Driverless-Simulator/ros/src/fs_msgs .
+RUN ln -s /root/Formula-Student-Driverless-Simulator/ros/src/fs_msgs . && \
+    ln -s /root/Formula-Student-Driverless-Simulator/ros/src/fsds_ros_bridge .
 
 WORKDIR /root/catkin_ws
 RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
