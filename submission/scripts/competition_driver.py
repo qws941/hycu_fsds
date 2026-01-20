@@ -68,7 +68,7 @@ Publish:
     /debug/commentary (String)             - 자연어 상태 설명
 
 Author: HYCU Autonomous Driving Team
-Date: 2026-01
+Date: 2025-01
 """
 import rospy
 import threading
