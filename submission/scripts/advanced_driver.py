@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """
-FSDS Advanced Autonomous Driver - PID 조향 + 중앙선 추종
-경진대회 고급 템플릿
+FSDS Advanced Autonomous Driver - PID Steering with Centerline Following
+
+Competition advanced template demonstrating:
+- PID controller for smooth steering response
+- Centerline extraction from left/right cone positions
+- Speed modulation based on cone density
+
+Reference:
+    Astrom, K.J. & Murray, R.M. (2008). Feedback Systems: An Introduction
+    for Scientists and Engineers. Princeton University Press.
 """
 import rospy
 import numpy as np
@@ -47,7 +55,7 @@ class AdvancedDriver:
         self.right_cones = []
         
     def find_cones_with_sides(self, points):
-        """콘 탐지 + 좌/우 분류 (Y좌표 기준)"""
+        """Detect cones and classify as left/right based on Y-coordinate."""
         if len(points) == 0:
             return [], []
             
@@ -91,7 +99,7 @@ class AdvancedDriver:
         self.current_speed = np.sqrt(vx**2 + vy**2)
         
     def calculate_centerline_error(self):
-        """중앙선 오차 계산: 좌우 콘 평균 Y좌표의 중점"""
+        """Calculate lateral error from centerline (midpoint of left/right cone averages)."""
         if not self.left_cones and not self.right_cones:
             return 0.0
             

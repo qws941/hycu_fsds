@@ -83,6 +83,7 @@ from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion, TransformSta
 import sensor_msgs.point_cloud2 as pc2
 import tf.transformations as tft
 import tf2_ros
+import threading
 
 
 class SimpleSLAM:
@@ -99,6 +100,7 @@ class SimpleSLAM:
         # Initialize with -1 (unknown) per ROS OccupancyGrid convention
         # Values: -1=unknown, 0=free, 100=occupied
         self.occupancy_grid = np.full((self.map_size, self.map_size), -1, dtype=np.int8)
+        self.grid_lock = threading.Lock()  # Protect occupancy_grid access
         self.cone_map = []
         
         self.robot_x = 0.0
@@ -144,19 +146,20 @@ class SimpleSLAM:
             z_mask = (points[:, 2] > -0.3) & (points[:, 2] < 0.5)
             filtered = points[z_mask]
             
-            for p in filtered[::10]:
-                world_x = self.robot_x + p[0] * cos(self.robot_yaw) - p[1] * sin(self.robot_yaw)
-                world_y = self.robot_y + p[0] * sin(self.robot_yaw) + p[1] * cos(self.robot_yaw)
-                
-                grid_x = int((world_x - self.map_origin) / self.map_resolution)
-                grid_y = int((world_y - self.map_origin) / self.map_resolution)
-                
-                if 0 <= grid_x < self.map_size and 0 <= grid_y < self.map_size:
-                    current = self.occupancy_grid[grid_y, grid_x]
-                    # If unknown (-1), start from 0 before incrementing
-                    if current < 0:
-                        current = 0
-                    self.occupancy_grid[grid_y, grid_x] = min(100, current + 10)
+            with self.grid_lock:
+                for p in filtered[::10]:
+                    world_x = self.robot_x + p[0] * cos(self.robot_yaw) - p[1] * sin(self.robot_yaw)
+                    world_y = self.robot_y + p[0] * sin(self.robot_yaw) + p[1] * cos(self.robot_yaw)
+                    
+                    grid_x = int((world_x - self.map_origin) / self.map_resolution)
+                    grid_y = int((world_y - self.map_origin) / self.map_resolution)
+                    
+                    if 0 <= grid_x < self.map_size and 0 <= grid_y < self.map_size:
+                        current = self.occupancy_grid[grid_y, grid_x]
+                        # If unknown (-1), start from 0 before incrementing
+                        if current < 0:
+                            current = 0
+                        self.occupancy_grid[grid_y, grid_x] = min(100, current + 10)
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"Lidar callback error: {e}")
     
@@ -171,7 +174,8 @@ class SimpleSLAM:
         msg.info.origin.position.y = self.map_origin
         msg.info.origin.position.z = 0
         msg.info.origin.orientation.w = 1.0
-        msg.data = self.occupancy_grid.flatten().tolist()
+        with self.grid_lock:
+            msg.data = self.occupancy_grid.flatten().tolist()
         self.map_pub.publish(msg)
     
     def publish_path(self):
@@ -228,10 +232,11 @@ class SimpleSLAM:
     def apply_decay(self):
         now = rospy.Time.now()
         if (now - self.last_decay_time).to_sec() >= self.decay_interval:
-            # Only decay cells that have been observed (value >= 0)
-            # Preserve unknown cells (-1) as unknown
-            observed_mask = self.occupancy_grid >= 0
-            self.occupancy_grid[observed_mask] = np.maximum(0, self.occupancy_grid[observed_mask] - self.decay_rate)
+            with self.grid_lock:
+                # Only decay cells that have been observed (value >= 0)
+                # Preserve unknown cells (-1) as unknown
+                observed_mask = self.occupancy_grid >= 0
+                self.occupancy_grid[observed_mask] = np.maximum(0, self.occupancy_grid[observed_mask] - self.decay_rate)
             self.last_decay_time = now
     
     def run(self):

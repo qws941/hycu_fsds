@@ -161,5 +161,132 @@ class TestSimpleSLAM(unittest.TestCase):
         self.assertAlmostEqual(world_x, 10.0, places=5)
         self.assertAlmostEqual(world_y, 11.0, places=5)
 
+class TestWatchdogStateMachine(unittest.TestCase):
+    """Test watchdog and state machine transitions - Critical safety tests."""
+    
+    def setUp(self):
+        with patch('rospy.get_param') as mock_get_param:
+            def side_effect(key, default=None):
+                params = {
+                    '~max_throttle': 0.25,
+                    '~min_speed': 2.0,
+                    '~max_speed': 6.0,
+                    '~wheelbase': 1.5,
+                    '~lookahead_base': 4.0,
+                    '~lookahead_speed_gain': 0.0,
+                    '~max_lateral_accel': 4.0,
+                    '~max_steering': 0.5,
+                    '~degraded_timeout': 1.0,
+                    '~stopping_timeout': 3.0,
+                    '~lidar_stale_timeout': 1.0,
+                    '~odom_stale_timeout': 1.0,
+                    '~recovery_timeout': 1.0
+                }
+                return params.get(key, default)
+            mock_get_param.side_effect = side_effect
+            
+            self.driver = CompetitionDriver()
+    
+    def test_cones_lost_does_not_auto_recover_via_watchdog(self):
+        """CRITICAL: CONES_LOST should NOT auto-recover in check_watchdog().
+        Recovery should only happen via update_state() when cones are reacquired."""
+        from competition_driver import DriveState, StopReason
+        
+        # Set up STOPPING state due to CONES_LOST
+        self.driver.state = DriveState.STOPPING
+        self.driver.stop_reason = StopReason.CONES_LOST
+        self.driver.recovery_start_time = None
+        
+        # Create mock Time objects that properly handle subtraction
+        # (now - last_time).to_sec() should return 0.0 (fresh sensor data)
+        mock_duration = MagicMock()
+        mock_duration.to_sec.return_value = 0.0  # 0 seconds elapsed = fresh
+        
+        mock_now = MagicMock()
+        mock_now.to_sec.return_value = 100.0
+        mock_now.__sub__ = MagicMock(return_value=mock_duration)
+        
+        mock_lidar_time = MagicMock()
+        mock_lidar_time.to_sec.return_value = 100.0
+        
+        mock_odom_time = MagicMock()
+        mock_odom_time.to_sec.return_value = 100.0
+        
+        with patch('rospy.Time.now', return_value=mock_now):
+            self.driver.last_lidar_time = mock_lidar_time
+            self.driver.last_odom_time = mock_odom_time
+            
+            # Call watchdog - should NOT recover from CONES_LOST
+            self.driver.check_watchdog()
+        
+        # State should remain STOPPING with CONES_LOST
+        self.assertEqual(self.driver.state, DriveState.STOPPING)
+        self.assertEqual(self.driver.stop_reason, StopReason.CONES_LOST)
+    
+    def test_v2x_stop_zone_forces_stopping(self):
+        """V2X stop_zone=True should force STOPPING state."""
+        from competition_driver import DriveState, StopReason
+        
+        self.driver.state = DriveState.TRACKING
+        self.driver.v2x_stop_zone = True
+        
+        mock_now = MagicMock()
+        mock_now.to_sec.return_value = 100.0
+        with patch('rospy.Time.now', return_value=mock_now):
+            self.driver.last_lidar_time = mock_now
+            self.driver.last_odom_time = mock_now
+            self.driver.check_watchdog()
+        
+        self.assertEqual(self.driver.state, DriveState.STOPPING)
+        self.assertEqual(self.driver.stop_reason, StopReason.V2X_STOP_ZONE)
+    
+    def test_single_noise_cone_does_not_reset_timer(self):
+        """Single noise cone should NOT refresh last_valid_time to prevent false keepalive."""
+        from competition_driver import DriveState
+        
+        self.driver.state = DriveState.DEGRADED
+        
+        mock_now = MagicMock()
+        initial_time = MagicMock()
+        initial_time.to_sec.return_value = 50.0
+        mock_now.to_sec.return_value = 100.0
+        
+        self.driver.last_valid_time = initial_time
+        
+        # Only 1 cone on one side (noise scenario)
+        left_cones = [{'x': 5.0, 'y': 2.0, 'points': 5}]
+        right_cones = []
+        
+        with patch('rospy.Time.now', return_value=mock_now):
+            self.driver.update_state(left_cones, right_cones)
+        
+        # Timer should NOT have been updated (still old time)
+        self.assertEqual(self.driver.last_valid_time, initial_time)
+    
+    def test_strong_perception_resets_timer(self):
+        """Both-side cones (strong perception) should refresh last_valid_time."""
+        from competition_driver import DriveState
+        
+        self.driver.state = DriveState.DEGRADED
+        
+        mock_now = MagicMock()
+        initial_time = MagicMock()
+        initial_time.to_sec.return_value = 50.0
+        mock_now.to_sec.return_value = 100.0
+        
+        self.driver.last_valid_time = initial_time
+        
+        # Both sides have cones (strong perception)
+        left_cones = [{'x': 5.0, 'y': 2.0, 'points': 5}]
+        right_cones = [{'x': 5.0, 'y': -2.0, 'points': 5}]
+        
+        with patch('rospy.Time.now', return_value=mock_now):
+            self.driver.update_state(left_cones, right_cones)
+        
+        # Timer should be updated to current time
+        self.assertEqual(self.driver.last_valid_time, mock_now)
+        self.assertEqual(self.driver.state, DriveState.TRACKING)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -168,8 +168,11 @@ class CompetitionDriver:
         
         self.last_throttle = 0.0
         self.last_steering = 0.0
-        self.throttle_rate_limit = rospy.get_param('~throttle_rate_limit', 0.1)
-        self.steering_rate_limit = rospy.get_param('~steering_rate_limit', 0.15)
+        # Rate limits are now per-second values (multiplied by dt in apply_rate_limit)
+        self.throttle_rate_limit = rospy.get_param('~throttle_rate_limit', 2.0)  # units/second
+        self.steering_rate_limit = rospy.get_param('~steering_rate_limit', 3.0)  # rad/second
+        self.control_dt = 1.0 / 20.0  # 20Hz control loop
+        self.last_control_time = None
         
         self.v2x_speed_limit = self.max_speed
         self.v2x_hazard = False
@@ -220,9 +223,10 @@ class CompetitionDriver:
     
     def add_commentary(self, text):
         timestamp = rospy.Time.now().to_sec()
-        self.commentary_history.append((timestamp, text))
-        if len(self.commentary_history) > 20:
-            self.commentary_history.pop(0)
+        with self.data_lock:
+            self.commentary_history.append((timestamp, text))
+            if len(self.commentary_history) > 20:
+                self.commentary_history.pop(0)
         rospy.loginfo(f"[COMMENTARY] {text}")
         self.debug_commentary_pub.publish(String(data=text))
         
@@ -377,6 +381,14 @@ class CompetitionDriver:
         return np.clip(steering, -self.max_steering, self.max_steering)
     
     def estimate_curvature(self, centerline):
+        """Estimate path curvature using arc-length parameterization.
+        
+        Uses proper arc-length derivatives instead of np.gradient which assumes
+        uniform spacing. This handles irregular cone spacing correctly.
+        
+        Curvature formula: κ = |dx/ds * d²y/ds² - dy/ds * d²x/ds²|
+        where s is arc-length parameter.
+        """
         if len(centerline) < 3:
             return self.get_smoothed_curvature(0.0)
         
@@ -385,13 +397,36 @@ class CompetitionDriver:
         if len(points) < 3:
             return self.get_smoothed_curvature(0.0)
         
-        dx = np.gradient(points[:, 0])
-        dy = np.gradient(points[:, 1])
-        ddx = np.gradient(dx)
-        ddy = np.gradient(dy)
+        # Compute arc-length between consecutive points
+        diffs = np.diff(points, axis=0)
+        segment_lengths = np.sqrt(np.sum(diffs**2, axis=1))
         
-        curvature = np.abs(dx * ddy - dy * ddx) / (dx**2 + dy**2 + 1e-6)**1.5
-        raw_curvature = np.mean(curvature)
+        # Avoid division by zero for coincident points
+        segment_lengths = np.maximum(segment_lengths, 1e-6)
+        
+        # Arc-length parameterized derivatives: dx/ds, dy/ds
+        dx_ds = diffs[:, 0] / segment_lengths
+        dy_ds = diffs[:, 1] / segment_lengths
+        
+        if len(dx_ds) < 2:
+            return self.get_smoothed_curvature(0.0)
+        
+        # Second derivatives: d²x/ds², d²y/ds²
+        # Use midpoint arc-lengths for second derivative
+        mid_lengths = (segment_lengths[:-1] + segment_lengths[1:]) / 2
+        mid_lengths = np.maximum(mid_lengths, 1e-6)
+        
+        ddx_ds = np.diff(dx_ds) / mid_lengths
+        ddy_ds = np.diff(dy_ds) / mid_lengths
+        
+        # Curvature at interior points: κ = |dx/ds * d²y/ds² - dy/ds * d²x/ds²|
+        # Use average of adjacent first derivatives at second derivative locations
+        dx_mid = (dx_ds[:-1] + dx_ds[1:]) / 2
+        dy_mid = (dy_ds[:-1] + dy_ds[1:]) / 2
+        
+        curvature = np.abs(dx_mid * ddy_ds - dy_mid * ddx_ds)
+        raw_curvature = float(np.mean(curvature)) if len(curvature) > 0 else 0.0
+        
         return self.get_smoothed_curvature(raw_curvature)
     
     def get_smoothed_curvature(self, new_curvature):
@@ -416,10 +451,22 @@ class CompetitionDriver:
             return self.min_speed
         return speed
     
-    def apply_rate_limit(self, target, current, max_rate):
+    def apply_rate_limit(self, target, current, max_rate_per_sec, dt):
+        """Apply rate limiting with dt-based scaling.
+        
+        Args:
+            target: Desired value
+            current: Current value
+            max_rate_per_sec: Maximum change rate in units per second
+            dt: Time delta since last update in seconds
+        
+        Returns:
+            Rate-limited value that changes at most max_rate_per_sec * dt
+        """
+        max_delta = max_rate_per_sec * dt
         delta = target - current
-        if abs(delta) > max_rate:
-            return current + max_rate * np.sign(delta)
+        if abs(delta) > max_delta:
+            return current + max_delta * np.sign(delta)
         return target
     
     def calculate_throttle(self, target_speed):
@@ -467,7 +514,9 @@ class CompetitionDriver:
             self.recovery_start_time = None
             return
         
-        if self.state == DriveState.STOPPING and self.stop_reason in [StopReason.LIDAR_STALE, StopReason.ODOM_STALE, StopReason.CONES_LOST]:
+        # Note: CONES_LOST recovery is handled by update_state() when cones are reacquired
+        # Watchdog only handles sensor staleness recovery (LIDAR_STALE, ODOM_STALE)
+        if self.state == DriveState.STOPPING and self.stop_reason in [StopReason.LIDAR_STALE, StopReason.ODOM_STALE]:
             if self.recovery_start_time is None:
                 self.recovery_start_time = now
             elif (now - self.recovery_start_time).to_sec() >= self.recovery_timeout:
@@ -480,6 +529,8 @@ class CompetitionDriver:
         now = rospy.Time.now()
         has_valid_cones = len(left_cones) >= 1 or len(right_cones) >= 1
         has_both_sides = len(left_cones) >= 1 and len(right_cones) >= 1
+        # Require stronger perception quality to refresh timer (prevent noise from resetting)
+        has_strong_perception = has_both_sides or (len(left_cones) + len(right_cones) >= 3)
         
         if has_valid_cones:
             if self.state == DriveState.STOPPING and self.stop_reason == StopReason.CONES_LOST:
@@ -494,7 +545,9 @@ class CompetitionDriver:
                 self.state = DriveState.TRACKING
                 self.stop_reason = StopReason.NONE
             
-            self.last_valid_time = now
+            # Only refresh timer with strong perception to prevent single noise cone from blocking STOPPING
+            if has_strong_perception:
+                self.last_valid_time = now
             
             if left_cones and right_cones:
                 left_y = np.mean([c['y'] for c in left_cones[:3]])
@@ -606,8 +659,8 @@ class CompetitionDriver:
         self.current_steering = self.pure_pursuit_steering(target_point)
         raw_throttle = self.calculate_throttle(self.current_target_speed)
         
-        cmd.steering = self.apply_rate_limit(self.current_steering, self.last_steering, self.steering_rate_limit)
-        cmd.throttle = self.apply_rate_limit(raw_throttle, self.last_throttle, self.throttle_rate_limit)
+        cmd.steering = self.apply_rate_limit(self.current_steering, self.last_steering, self.steering_rate_limit, self.control_dt)
+        cmd.throttle = self.apply_rate_limit(raw_throttle, self.last_throttle, self.throttle_rate_limit, self.control_dt)
         
         self.last_steering = cmd.steering
         self.last_throttle = cmd.throttle

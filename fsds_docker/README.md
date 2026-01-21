@@ -161,25 +161,25 @@ fsds_docker/
 
 ```mermaid
 graph LR
-    subgraph "입력"
+    subgraph Input
         LIDAR[LiDAR PointCloud]
         ODOM[Odometry]
     end
     
-    subgraph "콘 검출"
-        FILTER[Z-필터<br/>-0.3m ~ 0.5m]
-        CLUSTER[Grid 기반 클러스터링]
-        SPLIT[좌/우 분리<br/>y > 0: 좌측]
+    subgraph ConeDetection
+        FILTER["Z-Filter<br/>-0.3m ~ 0.5m"]
+        CLUSTER[Grid-based Clustering]
+        SPLIT["Left/Right Split<br/>y > 0: Left"]
     end
     
-    subgraph "경로 계획"
-        CENTER[Centerline 계산<br/>좌+우 평균]
-        LOOKAHEAD[Lookahead Point<br/>4.0m 전방]
+    subgraph PathPlanning
+        CENTER["Centerline<br/>Left+Right Avg"]
+        LOOKAHEAD["Lookahead Point<br/>4.0m Ahead"]
     end
     
-    subgraph "제어"
-        STEER[Pure Pursuit<br/>δ = atan2(2L·sin α, ld)]
-        SPEED[곡률 속도<br/>v = √(a_lat_max / κ)]
+    subgraph Control
+        STEER["Pure Pursuit<br/>delta = atan2(2L*sin(a), ld)"]
+        SPEED["Curvature Speed<br/>v = sqrt(a_lat_max / k)"]
     end
     
     LIDAR --> FILTER --> CLUSTER --> SPLIT
