@@ -287,6 +287,57 @@ class TestWatchdogStateMachine(unittest.TestCase):
         self.assertEqual(self.driver.last_valid_time, mock_now)
         self.assertEqual(self.driver.state, DriveState.TRACKING)
 
+    def test_safety_stop_reasons_not_overridden_by_update_state(self):
+        """Integration test: update_state() should NOT override safety STOPPING reasons."""
+        from competition_driver import DriveState, StopReason
+        
+        # Setup: V2X stop zone active -> STOPPING state
+        self.driver.state = DriveState.STOPPING
+        self.driver.stop_reason = StopReason.V2X_STOP_ZONE
+        
+        mock_now = MagicMock()
+        mock_now.to_sec.return_value = 100.0
+        
+        # Provide valid cones - this would normally promote to TRACKING
+        left_cones = [{'x': 5.0, 'y': 2.0, 'points': 5}]
+        right_cones = [{'x': 5.0, 'y': -2.0, 'points': 5}]
+        
+        with patch('rospy.Time.now', return_value=mock_now):
+            self.driver.update_state(left_cones, right_cones)
+        
+        # State should REMAIN STOPPING - safety stop reasons are authoritative
+        self.assertEqual(self.driver.state, DriveState.STOPPING)
+        self.assertEqual(self.driver.stop_reason, StopReason.V2X_STOP_ZONE)
+
+    def test_estop_latched_requires_restart(self):
+        """Integration test: E-stop should be latched and not auto-recover."""
+        from competition_driver import DriveState, StopReason
+        
+        self.driver.state = DriveState.TRACKING
+        self.driver.e_stop = True
+        self.driver.e_stop_latched = True
+        
+        mock_now = MagicMock()
+        mock_now.to_sec.return_value = 100.0
+        
+        with patch('rospy.Time.now', return_value=mock_now):
+            self.driver.last_lidar_time = mock_now
+            self.driver.last_odom_time = mock_now
+            self.driver.check_watchdog()
+        
+        self.assertEqual(self.driver.state, DriveState.STOPPING)
+        self.assertEqual(self.driver.stop_reason, StopReason.EMERGENCY_STOP)
+        
+        # Even if e_stop signal goes false, latch keeps it STOPPING
+        self.driver.e_stop = False
+        
+        with patch('rospy.Time.now', return_value=mock_now):
+            self.driver.check_watchdog()
+        
+        # Should STILL be STOPPING due to latch
+        self.assertEqual(self.driver.state, DriveState.STOPPING)
+        self.assertEqual(self.driver.stop_reason, StopReason.EMERGENCY_STOP)
+
 
 if __name__ == '__main__':
     unittest.main()

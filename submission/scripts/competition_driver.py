@@ -178,6 +178,7 @@ class CompetitionDriver:
         self.v2x_hazard = False
         self.v2x_stop_zone = False
         self.e_stop = False
+        self.e_stop_latched = False  # Once latched, requires node restart to clear
         
         self.sensors_ready = False
         self.lidar_received = False
@@ -218,7 +219,8 @@ class CompetitionDriver:
         if msg.data != self.e_stop:
             self.e_stop = msg.data
             if msg.data:
-                self.add_commentary("EMERGENCY STOP activated")
+                self.e_stop_latched = True  # Latch E-stop - requires node restart
+                self.add_commentary("EMERGENCY STOP activated (latched - restart required)")
                 self.stop_reason = StopReason.EMERGENCY_STOP
     
     def add_commentary(self, text):
@@ -477,6 +479,13 @@ class CompetitionDriver:
     def check_watchdog(self):
         now = rospy.Time.now()
         
+        # E-stop latch check - once latched, never auto-recover (requires node restart)
+        if self.e_stop_latched:
+            self.state = DriveState.STOPPING
+            self.stop_reason = StopReason.EMERGENCY_STOP
+            self.recovery_start_time = None
+            return
+        
         if self.e_stop:
             self.state = DriveState.STOPPING
             self.stop_reason = StopReason.EMERGENCY_STOP
@@ -489,8 +498,9 @@ class CompetitionDriver:
             self.recovery_start_time = None
             return
         
-        if self.state == DriveState.STOPPING and self.stop_reason in [StopReason.V2X_STOP_ZONE, StopReason.EMERGENCY_STOP]:
-            self.add_commentary(f"WATCHDOG: {self.stop_reason.name} cleared, resuming DEGRADED")
+        # V2X stop zone can auto-recover (operational, not emergency)
+        if self.state == DriveState.STOPPING and self.stop_reason == StopReason.V2X_STOP_ZONE:
+            self.add_commentary("WATCHDOG: V2X stop zone cleared, resuming DEGRADED")
             self.state = DriveState.DEGRADED
             self.stop_reason = StopReason.NONE
             self.recovery_start_time = None
@@ -527,6 +537,14 @@ class CompetitionDriver:
     
     def update_state(self, left_cones, right_cones):
         now = rospy.Time.now()
+        
+        # SAFETY GATE: Never override safety-critical stop reasons
+        # Only CONES_LOST can be recovered via cone detection
+        safety_stop_reasons = {StopReason.LIDAR_STALE, StopReason.ODOM_STALE, 
+                               StopReason.V2X_STOP_ZONE, StopReason.EMERGENCY_STOP}
+        if self.state == DriveState.STOPPING and self.stop_reason in safety_stop_reasons:
+            return  # Watchdog controls recovery for these cases
+        
         has_valid_cones = len(left_cones) >= 1 or len(right_cones) >= 1
         has_both_sides = len(left_cones) >= 1 and len(right_cones) >= 1
         # Require stronger perception quality to refresh timer (prevent noise from resetting)
@@ -650,9 +668,25 @@ class CompetitionDriver:
                 self.current_steering = cmd.steering
                 return cmd
         else:
+            # TRACKING mode: use current centerline
             centerline = centerline_snapshot
-            self.current_curvature = self.estimate_curvature(centerline)
-            self.current_target_speed = self.calculate_target_speed(self.current_curvature)
+            # SAFETY: If current centerline is empty, fallback to last valid with limited speed
+            if not centerline:
+                if last_valid_centerline_snapshot:
+                    centerline = last_valid_centerline_snapshot
+                    self.current_curvature = self.estimate_curvature(centerline)
+                    self.current_target_speed = self.min_speed  # Cap speed when using stale data
+                    self.add_commentary("TRACKING: No current centerline, using last valid at min speed")
+                else:
+                    # No centerline data at all - brake
+                    cmd.throttle = 0.0
+                    cmd.steering = 0.0
+                    cmd.brake = 1.0
+                    self.current_target_speed = 0.0
+                    return cmd
+            else:
+                self.current_curvature = self.estimate_curvature(centerline)
+                self.current_target_speed = self.calculate_target_speed(self.current_curvature)
         
         target_point = self.get_lookahead_point(centerline)
         
