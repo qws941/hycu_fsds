@@ -1,7 +1,7 @@
 # FSDS AUTONOMOUS DRIVING - PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-01-21
-**Commit:** cb98a6d
+**Commit:** fbe25d4
 **Branch:** master
 
 ## OVERVIEW
@@ -24,22 +24,22 @@ hycu_fsds/
 │   ├── entrypoint.sh        # Container init + ROS sourcing
 │   ├── README.md            # Mermaid architecture + Safety section
 │   ├── tests/
-│   │   └── test_algorithms.py  # 22 unit tests (pytest/unittest)
+│   │   └── test_algorithms.py  # 14 unit tests (pytest/unittest)
 │   └── scripts/
-│       ├── competition_driver.py  # 750L - Pure Pursuit + V2X (MAIN)
+│       ├── competition_driver.py  # 784L - Pure Pursuit + V2X (MAIN)
 │       ├── simple_slam.py         # 262L - Occupancy grid + TF tree
 │       ├── v2x_rsu.py             # 336L - Virtual RSU (6 scenarios)
 │       ├── lap_timer.py           # 191L - Performance + HUD
 │       ├── cone_classifier.py     # 205L - Color classification + RViz
 │       ├── basic_driver.py        #  83L - LiDAR obstacle stop
 │       ├── autonomous_driver.py   # 107L - Cone detection + steering
-│       └── advanced_driver.py     # 146L - PID + centerline
+│       └── advanced_driver.py     # 154L - PID + centerline
 │
 └── submission/              # Mirror of fsds_docker/ for packaging
     └── (same structure)     # Keep synced: rsync -av fsds_docker/ submission/
 ```
 
-**Total Python LOC:** 2,372 lines
+**Total Python LOC:** 2,465 lines
 
 ## WHERE TO LOOK
 
@@ -171,12 +171,10 @@ docker-compose down
 | Test Suite | Count | Coverage |
 |------------|-------|----------|
 | Pure Pursuit steering | 6 | Geometric calculations |
-| Curvature estimation | 4 | Path analysis |
-| Lookahead selection | 3 | Arc-length vs Euclidean |
-| Cone filtering | 2 | Z-height, clustering |
-| Speed control | 3 | Curvature-based limits |
-| Watchdog state machine | 4 | CONES_LOST, V2X stop, perception |
-| **Total** | **22** | Core algorithms |
+| Curvature estimation | 2 | Path analysis |
+| SLAM coordinate transform | 2 | Grid conversion |
+| Watchdog state machine | 4 | Safety stop, E-stop latch |
+| **Total** | **14** | Core algorithms |
 
 Run: `python3 -m pytest tests/ -v` (inside container)
 
