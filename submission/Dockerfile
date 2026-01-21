@@ -61,6 +61,9 @@ RUN pip3 install --no-cache-dir \
     opencv-python==4.8.0.74 \
     msgpack-rpc-python==0.4.1
 
+# FSDS Python client (official package for simulator communication)
+RUN pip3 install --no-cache-dir fsds
+
 RUN pip3 install --no-cache-dir airsim==1.8.1
 
 # ===========================================
@@ -68,18 +71,23 @@ RUN pip3 install --no-cache-dir airsim==1.8.1
 # ===========================================
 WORKDIR /root
 
-# Clone FSDS Repository for ROS messages only (skip AirLib C++ build)
-# Pinned to specific commit for reproducibility
+# Clone FSDS Repository with submodules (includes fs_msgs)
 ARG FSDS_COMMIT=v2.2.0
 RUN git clone https://github.com/FS-Driverless/Formula-Student-Driverless-Simulator.git \
     --recurse-submodules --depth 1 --branch ${FSDS_COMMIT}
 
-# Setup Catkin Workspace with fs_msgs (Python drivers use message types only)
+# Build FSDS ROS packages (fs_msgs + fsds_ros_bridge)
+WORKDIR /root/Formula-Student-Driverless-Simulator/ros
+RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
+    catkin_make -DCMAKE_BUILD_TYPE=Release"
+
+# Setup custom scripts workspace
 WORKDIR /root/catkin_ws/src
 RUN ln -s /root/Formula-Student-Driverless-Simulator/ros/src/fs_msgs .
 
 WORKDIR /root/catkin_ws
 RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
+    source /root/Formula-Student-Driverless-Simulator/ros/devel/setup.bash && \
     catkin init && \
     catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release && \
     catkin build fs_msgs"
