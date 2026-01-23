@@ -1,7 +1,7 @@
 # FSDS AUTONOMOUS DRIVING - PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-01-21
-**Commit:** fbe25d4
+**Commit:** 1d661b9
 **Branch:** master
 
 ## OVERVIEW
@@ -23,54 +23,105 @@ hycu_fsds/
 │   ├── dashboard.html       # Web UI dashboard
 │   ├── entrypoint.sh        # Container init + ROS sourcing
 │   ├── README.md            # Mermaid architecture + Safety section
-│   ├── tests/
-│   │   └── test_algorithms.py  # 14 unit tests (pytest/unittest)
-│   └── scripts/
-│       ├── competition_driver.py  # 784L - Pure Pursuit + V2X (MAIN)
-│       ├── simple_slam.py         # 262L - Occupancy grid + TF tree
-│       ├── v2x_rsu.py             # 336L - Virtual RSU (6 scenarios)
-│       ├── lap_timer.py           # 191L - Performance + HUD
-│       ├── cone_classifier.py     # 205L - Color classification + RViz
-│       ├── basic_driver.py        #  83L - LiDAR obstacle stop
-│       ├── autonomous_driver.py   # 107L - Cone detection + steering
-│       └── advanced_driver.py     # 154L - PID + centerline
+│   │
+│   ├── scripts/             # Original monolithic scripts (deprecated backup)
+│   │   ├── competition_driver.py  # 784L - Original Pure Pursuit + V2X
+│   │   ├── simple_slam.py         # 262L - Occupancy grid + TF tree
+│   │   ├── v2x_rsu.py             # 336L - Virtual RSU (6 scenarios)
+│   │   ├── lap_timer.py           # 191L - Performance + HUD
+│   │   ├── cone_classifier.py     # 205L - Color classification + RViz
+│   │   ├── basic_driver.py        #  83L - LiDAR obstacle stop
+│   │   ├── autonomous_driver.py   # 107L - Cone detection + steering
+│   │   └── advanced_driver.py     # 154L - PID + centerline
+│   │
+│   ├── src/                 # ✅ NEW: Modular package structure
+│   │   ├── __init__.py
+│   │   ├── control/         # Control algorithms
+│   │   │   ├── __init__.py
+│   │   │   ├── pure_pursuit.py    # get_lookahead_point(), pure_pursuit_steering()
+│   │   │   └── speed.py           # estimate_curvature(), calculate_target_speed()
+│   │   ├── perception/      # Perception modules
+│   │   │   ├── __init__.py
+│   │   │   ├── cone_detector.py   # find_cones_filtered(), build_centerline()
+│   │   │   ├── slam.py            # SimpleSLAM class
+│   │   │   └── cone_classifier.py
+│   │   ├── utils/           # Utilities
+│   │   │   ├── __init__.py
+│   │   │   ├── watchdog.py        # DriveState, StopReason, Watchdog
+│   │   │   └── lap_timer.py
+│   │   ├── v2x/             # V2X communication
+│   │   │   ├── __init__.py
+│   │   │   └── rsu.py
+│   │   └── drivers/         # Driver implementations
+│   │       ├── __init__.py
+│   │       ├── competition.py     # Modular CompetitionDriver (uses src.*)
+│   │       ├── basic.py
+│   │       ├── autonomous.py
+│   │       └── advanced.py
+│   │
+│   ├── config/              # ✅ NEW: Externalized configuration
+│   │   └── driver_params.yaml     # All ROS parameters in YAML
+│   │
+│   ├── launch/              # ✅ NEW: ROS launch files
+│   │   └── competition.launch     # Loads params + runs driver
+│   │
+│   ├── docs/                # ✅ NEW: Architecture documentation
+│   │   └── ARCHITECTURE.md
+│   │
+│   └── tests/
+│       └── test_algorithms.py  # 14 unit tests (pytest/unittest)
 │
 └── submission/              # Mirror of fsds_docker/ for packaging
     └── (same structure)     # Keep synced: rsync -av fsds_docker/ submission/
 ```
 
-**Total Python LOC:** 2,465 lines
+**Total Python LOC:** ~5,100 lines (including modular structure)
 
 ## WHERE TO LOOK
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Add new driver | `fsds_docker/scripts/` | Copy `competition_driver.py` as template |
+| Add new driver | `fsds_docker/src/drivers/` | Extend from existing driver |
+| Add control algorithm | `fsds_docker/src/control/` | Pure functions, no ROS deps |
+| Add perception module | `fsds_docker/src/perception/` | Cone detection, SLAM |
+| Tune driving params | `fsds_docker/config/driver_params.yaml` | YAML config |
 | Change Windows IP | `fsds_docker/.env` | `FSDS_HOST_IP=your.ip` |
-| Add Python deps | `fsds_docker/Dockerfile` | Line 52-58, `pip3 install` |
-| Add ROS packages | `fsds_docker/Dockerfile` | Line 32-38, `apt-get` |
-| Tune driving params | `scripts/*_driver.py` | `__init__` method or `rosparam set` |
+| Add Python deps | `fsds_docker/Dockerfile` | Line 57-68, `pip3 install` |
+| Add ROS packages | `fsds_docker/Dockerfile` | Line 32-44, `apt-get` |
 | Run tests | Inside container | `python3 -m pytest tests/ -v` |
 | Sync submission | Project root | `rsync -av fsds_docker/ submission/` |
 
 ## CODE MAP
 
+### Modular Structure (src/)
+
 | Symbol | Type | Location | Role |
 |--------|------|----------|------|
-| `CompetitionDriver` | class | competition_driver.py | Pure Pursuit + V2X + Watchdog (MAIN) |
-| `SimpleSLAM` | class | simple_slam.py | Occupancy grid + TF tree + decay |
-| `V2X_RSU` | class | v2x_rsu.py | Virtual RSU (speed/hazard/stop) |
-| `LapTimer` | class | lap_timer.py | Lap counting + HUD telemetry |
-| `ConeClassifier` | class | cone_classifier.py | Intensity-based color classification |
-| `DriveState` | enum | competition_driver.py | TRACKING/DEGRADED/STOPPING |
-| `StopReason` | enum | competition_driver.py | Watchdog stop reasons |
-| `find_cones_filtered` | method | competition_driver.py | Grid-based O(N) clustering |
-| `pure_pursuit_steering` | method | competition_driver.py | Geometric path following |
-| `estimate_curvature` | method | competition_driver.py | Gradient-based curvature |
-| `calculate_target_speed` | method | competition_driver.py | √(a_lat_max / κ) model |
-| `apply_rate_limit` | method | competition_driver.py | Smooth throttle/steering |
+| `pure_pursuit_steering` | func | src/control/pure_pursuit.py | Geometric steering calculation |
+| `get_lookahead_point` | func | src/control/pure_pursuit.py | Find target point on path |
+| `estimate_curvature` | func | src/control/speed.py | Gradient-based curvature |
+| `calculate_target_speed` | func | src/control/speed.py | √(a_lat_max / κ) model |
+| `apply_rate_limit` | func | src/control/speed.py | Smooth control changes |
+| `calculate_throttle` | func | src/control/speed.py | Speed → throttle mapping |
+| `DriveState` | enum | src/utils/watchdog.py | TRACKING/DEGRADED/STOPPING |
+| `StopReason` | enum | src/utils/watchdog.py | Watchdog stop reasons |
+| `Watchdog` | class | src/utils/watchdog.py | Sensor timeout monitoring |
+| `find_cones_filtered` | func | src/perception/cone_detector.py | Grid-based O(N) clustering |
+| `build_centerline` | func | src/perception/cone_detector.py | Left/right → center path |
+| `CompetitionDriver` | class | src/drivers/competition.py | Main driver (modular) |
+| `SimpleSLAM` | class | src/perception/slam.py | Occupancy grid + TF |
+| `V2X_RSU` | class | src/v2x/rsu.py | Virtual RSU scenarios |
+
+### Legacy Scripts (scripts/ - deprecated backup)
+
+| Symbol | Type | Location | Role |
+|--------|------|----------|------|
+| `CompetitionDriver` | class | scripts/competition_driver.py | Original monolithic driver |
+| `SimpleSLAM` | class | scripts/simple_slam.py | Original SLAM |
 
 ## KEY PARAMETERS
+
+All parameters externalized to `config/driver_params.yaml`:
 
 | Param | Default | ROS Param | Effect |
 |-------|---------|-----------|--------|
@@ -110,8 +161,9 @@ hycu_fsds/
 - **Thread safety**: `threading.Lock` for callback-main loop data
 - **Exception safety**: `try/except Exception:` in all ROS callbacks
 - **Data validation**: `np.isfinite()` guards on odom, V2X, control values
-- **ROS params**: All tunable values exposed via `~param_name`
-- **Academic docstrings**: All main files have 70+ line module docstrings with references
+- **ROS params**: All tunable values in `config/driver_params.yaml`
+- **Modular imports**: Use `from src.control.pure_pursuit import ...`
+- **PYTHONPATH**: Must include `/root/catkin_ws/src/fsds_scripts`
 
 ## ANTI-PATTERNS
 
@@ -127,6 +179,7 @@ hycu_fsds/
 | `as any`, `@ts-ignore` | Never suppress type errors |
 | Bare `except:` | Always `except Exception:` |
 | O(N²) clustering | Use grid-based O(N) in hot paths |
+| Direct edit to scripts/ | Use src/ for new development |
 
 ## COMMANDS
 
@@ -137,17 +190,27 @@ hycu_fsds/
 # Enter dev container
 docker exec -it fsds_dev bash
 
-# Run driver (inside container)
+# Run modular driver (inside container)
+roslaunch fsds_scripts competition.launch
+
+# Or run directly with PYTHONPATH
+export PYTHONPATH=/root/catkin_ws/src/fsds_scripts:$PYTHONPATH
+python3 /root/catkin_ws/src/fsds_scripts/src/drivers/competition.py
+
+# Run legacy driver (original monolithic)
 python3 /root/catkin_ws/src/fsds_scripts/scripts/competition_driver.py
 
 # Run SLAM (separate terminal)
-python3 /root/catkin_ws/src/fsds_scripts/scripts/simple_slam.py
+python3 /root/catkin_ws/src/fsds_scripts/src/perception/slam.py
 
 # Run V2X RSU
-python3 /root/catkin_ws/src/fsds_scripts/scripts/v2x_rsu.py
+python3 /root/catkin_ws/src/fsds_scripts/src/v2x/rsu.py
 
 # Run tests
 python3 -m pytest tests/ -v
+
+# Load params manually
+rosparam load /root/catkin_ws/src/fsds_scripts/config/driver_params.yaml /competition_driver
 
 # View topics
 rostopic list
@@ -157,7 +220,7 @@ rostopic echo /fsds/testing_only/odom
 rosparam set /competition_driver/max_speed 8.0
 
 # Sync submission directory
-rsync -av --exclude='__pycache__' fsds_docker/ submission/
+rsync -av --exclude='__pycache__' --exclude='.venv' --exclude='.pytest_cache' fsds_docker/ submission/
 
 # Visualize
 docker-compose --profile viz up -d rviz
@@ -170,13 +233,36 @@ docker-compose down
 
 | Test Suite | Count | Coverage |
 |------------|-------|----------|
-| Pure Pursuit steering | 6 | Geometric calculations |
-| Curvature estimation | 2 | Path analysis |
+| Pure Pursuit steering | 3 | Geometric calculations (straight, left, right) |
+| Curvature/Speed | 3 | Path analysis, target speed |
 | SLAM coordinate transform | 2 | Grid conversion |
-| Watchdog state machine | 4 | Safety stop, E-stop latch |
+| Watchdog state machine | 6 | CONES_LOST, V2X stop, perception, E-stop latch |
 | **Total** | **14** | Core algorithms |
 
 Run: `python3 -m pytest tests/ -v` (inside container)
+
+## MODULAR ARCHITECTURE
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    src/drivers/competition.py               │
+│                     (CompetitionDriver class)                │
+├─────────────────────────────────────────────────────────────┤
+│  Imports from:                                               │
+│  ├── src.control.pure_pursuit                               │
+│  ├── src.control.speed                                      │
+│  ├── src.perception.cone_detector                           │
+│  └── src.utils.watchdog                                     │
+└─────────────────────────────────────────────────────────────┘
+         │                    │                    │
+         ▼                    ▼                    ▼
+┌─────────────┐    ┌─────────────────┐    ┌──────────────┐
+│   control/  │    │   perception/   │    │    utils/    │
+├─────────────┤    ├─────────────────┤    ├──────────────┤
+│pure_pursuit │    │ cone_detector   │    │  watchdog    │
+│   speed     │    │     slam        │    │  lap_timer   │
+└─────────────┘    └─────────────────┘    └──────────────┘
+```
 
 ## REFERENCES (in docstrings)
 
@@ -191,9 +277,11 @@ Run: `python3 -m pytest tests/ -v` (inside container)
 
 - Windows FSDS simulator must be running BEFORE `start.sh`
 - ROS Bridge connects via port 41451
-- Container scripts auto-mounted from `./scripts/` - edit on host, run in container
-- `competition_driver.py` is the main submission for the competition
+- Container scripts auto-mounted from `./scripts/` and `./src/` - edit on host, run in container
+- `src/drivers/competition.py` is the modular version of the competition driver
+- `scripts/competition_driver.py` is kept as deprecated backup
 - `submission/` directory is a duplicate of `fsds_docker/` for packaging - keep synced
 - Service startup order: roscore → fsds_bridge → [dev, lap_timer, cone_classifier]
 - All drivers follow 20Hz control loop pattern
 - Academic docstrings include algorithm explanations for code review scoring
+- PYTHONPATH must be set for modular imports to work

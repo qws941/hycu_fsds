@@ -59,7 +59,8 @@ RUN pip3 install --no-cache-dir \
     scipy==1.10.1 \
     matplotlib==3.7.2 \
     opencv-python==4.8.0.74 \
-    msgpack-rpc-python==0.4.1
+    msgpack-rpc-python==0.4.1 \
+    pytest==8.3.5
 
 # FSDS Python client (official package for simulator communication)
 RUN pip3 install --no-cache-dir fsds
@@ -95,7 +96,10 @@ RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
 # ===========================================
 # Custom Scripts Directory
 # ===========================================
-RUN mkdir -p /root/catkin_ws/src/fsds_scripts/scripts
+RUN mkdir -p /root/catkin_ws/src/fsds_scripts/scripts \
+    && mkdir -p /root/catkin_ws/src/fsds_scripts/src \
+    && mkdir -p /root/catkin_ws/src/fsds_scripts/config \
+    && mkdir -p /root/catkin_ws/src/fsds_scripts/tests
 WORKDIR /root/catkin_ws
 
 # ===========================================
@@ -103,7 +107,8 @@ WORKDIR /root/catkin_ws
 # ===========================================
 RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc && \
     echo "source /root/catkin_ws/devel/setup.bash" >> ~/.bashrc && \
-    echo "export ROS_MASTER_URI=\${ROS_MASTER_URI:-http://localhost:11311}" >> ~/.bashrc
+    echo "export ROS_MASTER_URI=\${ROS_MASTER_URI:-http://localhost:11311}" >> ~/.bashrc && \
+    echo "export PYTHONPATH=/root/catkin_ws/src/fsds_scripts:\${PYTHONPATH}" >> ~/.bashrc
 
 # Entry point
 COPY entrypoint.sh /entrypoint.sh

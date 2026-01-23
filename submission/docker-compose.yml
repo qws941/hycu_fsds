@@ -53,6 +53,10 @@ services:
     volumes:
       # Mount custom scripts
       - ./scripts:/root/catkin_ws/src/fsds_scripts/scripts:rw
+      # Mount modular source code
+      - ./src:/root/catkin_ws/src/fsds_scripts/src:rw
+      # Mount configuration
+      - ./config:/root/catkin_ws/src/fsds_scripts/config:ro
       # X11 for GUI (Linux)
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       # Shared data
@@ -88,6 +92,12 @@ services:
     volumes:
       # Mount custom scripts (editable)
       - ./scripts:/root/catkin_ws/src/fsds_scripts/scripts:rw
+      # Mount modular source code
+      - ./src:/root/catkin_ws/src/fsds_scripts/src:rw
+      # Mount configuration
+      - ./config:/root/catkin_ws/src/fsds_scripts/config:ro
+      # Mount tests
+      - ./tests:/root/catkin_ws/src/fsds_scripts/tests:rw
       # X11 for RViz
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       # Shared data

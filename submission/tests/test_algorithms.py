@@ -32,10 +32,19 @@ tft = MagicMock()
 tft.euler_from_quaternion.return_value = (0, 0, 0)
 sys.modules['tf.transformations'] = tft
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from competition_driver import CompetitionDriver
-from simple_slam import SimpleSLAM
+from scripts.competition_driver import CompetitionDriver
+from scripts.simple_slam import SimpleSLAM
+
+try:
+    from src.control.pure_pursuit import pure_pursuit_steering, get_lookahead_point
+    from src.control.speed import estimate_curvature, calculate_target_speed, apply_rate_limit
+    from src.perception.cone_detector import find_cones_filtered, build_centerline
+    from src.utils.watchdog import DriveState, StopReason, Watchdog
+    SRC_AVAILABLE = True
+except ImportError:
+    SRC_AVAILABLE = False
 
 class TestCompetitionDriver(unittest.TestCase):
     def setUp(self):
@@ -190,7 +199,7 @@ class TestWatchdogStateMachine(unittest.TestCase):
     def test_cones_lost_does_not_auto_recover_via_watchdog(self):
         """CRITICAL: CONES_LOST should NOT auto-recover in check_watchdog().
         Recovery should only happen via update_state() when cones are reacquired."""
-        from competition_driver import DriveState, StopReason
+        from scripts.competition_driver import DriveState, StopReason
         
         # Set up STOPPING state due to CONES_LOST
         self.driver.state = DriveState.STOPPING
@@ -225,7 +234,7 @@ class TestWatchdogStateMachine(unittest.TestCase):
     
     def test_v2x_stop_zone_forces_stopping(self):
         """V2X stop_zone=True should force STOPPING state."""
-        from competition_driver import DriveState, StopReason
+        from scripts.competition_driver import DriveState, StopReason
         
         self.driver.state = DriveState.TRACKING
         self.driver.v2x_stop_zone = True
@@ -242,7 +251,7 @@ class TestWatchdogStateMachine(unittest.TestCase):
     
     def test_single_noise_cone_does_not_reset_timer(self):
         """Single noise cone should NOT refresh last_valid_time to prevent false keepalive."""
-        from competition_driver import DriveState
+        from scripts.competition_driver import DriveState
         
         self.driver.state = DriveState.DEGRADED
         
@@ -250,6 +259,11 @@ class TestWatchdogStateMachine(unittest.TestCase):
         initial_time = MagicMock()
         initial_time.to_sec.return_value = 50.0
         mock_now.to_sec.return_value = 100.0
+        
+        # Support time subtraction: now - initial_time = 50 seconds
+        duration_mock = MagicMock()
+        duration_mock.to_sec.return_value = 50.0
+        mock_now.__sub__ = MagicMock(return_value=duration_mock)
         
         self.driver.last_valid_time = initial_time
         
@@ -265,7 +279,7 @@ class TestWatchdogStateMachine(unittest.TestCase):
     
     def test_strong_perception_resets_timer(self):
         """Both-side cones (strong perception) should refresh last_valid_time."""
-        from competition_driver import DriveState
+        from scripts.competition_driver import DriveState
         
         self.driver.state = DriveState.DEGRADED
         
@@ -289,7 +303,7 @@ class TestWatchdogStateMachine(unittest.TestCase):
 
     def test_safety_stop_reasons_not_overridden_by_update_state(self):
         """Integration test: update_state() should NOT override safety STOPPING reasons."""
-        from competition_driver import DriveState, StopReason
+        from scripts.competition_driver import DriveState, StopReason
         
         # Setup: V2X stop zone active -> STOPPING state
         self.driver.state = DriveState.STOPPING
@@ -311,7 +325,7 @@ class TestWatchdogStateMachine(unittest.TestCase):
 
     def test_estop_latched_requires_restart(self):
         """Integration test: E-stop should be latched and not auto-recover."""
-        from competition_driver import DriveState, StopReason
+        from scripts.competition_driver import DriveState, StopReason
         
         self.driver.state = DriveState.TRACKING
         self.driver.e_stop = True
@@ -337,6 +351,180 @@ class TestWatchdogStateMachine(unittest.TestCase):
         # Should STILL be STOPPING due to latch
         self.assertEqual(self.driver.state, DriveState.STOPPING)
         self.assertEqual(self.driver.stop_reason, StopReason.EMERGENCY_STOP)
+
+    def test_v2x_resume_blocked_when_lidar_stale(self):
+        """Critical fix test: V2X stop zone clear should NOT resume if LiDAR is stale."""
+        from scripts.competition_driver import DriveState, StopReason
+        
+        # Setup: V2X stop zone was active, now cleared
+        self.driver.state = DriveState.STOPPING
+        self.driver.stop_reason = StopReason.V2X_STOP_ZONE
+        self.driver.v2x_stop_zone = False  # Stop zone cleared
+        self.driver.e_stop = False
+        self.driver.e_stop_latched = False
+        
+        # But LiDAR is stale (2 seconds old)
+        now_mock = MagicMock()
+        now_mock.to_sec.return_value = 100.0
+        
+        old_lidar_time = MagicMock()
+        old_lidar_time.to_sec.return_value = 98.0  # 2 seconds old
+        self.driver.last_lidar_time = old_lidar_time
+        self.driver.last_odom_time = now_mock  # Odom is fresh
+        self.driver.lidar_stale_timeout = 1.0
+        
+        # Support time subtraction for stale check
+        lidar_duration = MagicMock()
+        lidar_duration.to_sec.return_value = 2.0  # now - old_lidar = 2 seconds (stale)
+        odom_duration = MagicMock()
+        odom_duration.to_sec.return_value = 0.0  # now - now = 0 seconds (fresh)
+        
+        def sub_handler(other):
+            if other is old_lidar_time:
+                return lidar_duration
+            return odom_duration
+        now_mock.__sub__ = MagicMock(side_effect=sub_handler)
+        
+        with patch('rospy.Time.now', return_value=now_mock):
+            self.driver.check_watchdog()
+        
+        # Should stay STOPPING but switch to LIDAR_STALE reason
+        self.assertEqual(self.driver.state, DriveState.STOPPING)
+        self.assertEqual(self.driver.stop_reason, StopReason.LIDAR_STALE)
+
+    def test_v2x_resume_blocked_when_odom_stale(self):
+        """Critical fix test: V2X stop zone clear should NOT resume if Odom is stale."""
+        from scripts.competition_driver import DriveState, StopReason
+        
+        # Setup: V2X stop zone was active, now cleared
+        self.driver.state = DriveState.STOPPING
+        self.driver.stop_reason = StopReason.V2X_STOP_ZONE
+        self.driver.v2x_stop_zone = False  # Stop zone cleared
+        self.driver.e_stop = False
+        self.driver.e_stop_latched = False
+        
+        # LiDAR is fresh but Odom is stale
+        now_mock = MagicMock()
+        now_mock.to_sec.return_value = 100.0
+        
+        old_odom_time = MagicMock()
+        old_odom_time.to_sec.return_value = 98.0  # 2 seconds old
+        self.driver.last_lidar_time = now_mock  # LiDAR is fresh
+        self.driver.last_odom_time = old_odom_time
+        self.driver.odom_stale_timeout = 1.0
+        
+        # Support time subtraction for stale check
+        lidar_duration = MagicMock()
+        lidar_duration.to_sec.return_value = 0.0  # now - now = 0 seconds (fresh)
+        odom_duration = MagicMock()
+        odom_duration.to_sec.return_value = 2.0  # now - old_odom = 2 seconds (stale)
+        
+        def sub_handler(other):
+            if other is old_odom_time:
+                return odom_duration
+            return lidar_duration
+        now_mock.__sub__ = MagicMock(side_effect=sub_handler)
+        
+        with patch('rospy.Time.now', return_value=now_mock):
+            self.driver.check_watchdog()
+        
+        # Should stay STOPPING but switch to ODOM_STALE reason
+        self.assertEqual(self.driver.state, DriveState.STOPPING)
+        self.assertEqual(self.driver.stop_reason, StopReason.ODOM_STALE)
+
+    def test_weak_perception_does_not_recover_cones_lost(self):
+        """Critical fix test: Weak perception (1-2 cones one side) should NOT recover from CONES_LOST."""
+        from scripts.competition_driver import DriveState, StopReason
+        
+        # Setup: Currently in CONES_LOST stopping state
+        self.driver.state = DriveState.STOPPING
+        self.driver.stop_reason = StopReason.CONES_LOST
+        
+        mock_now = MagicMock()
+        mock_now.to_sec.return_value = 100.0
+        
+        initial_time = MagicMock()
+        initial_time.to_sec.return_value = 50.0  # Old timer
+        self.driver.last_valid_time = initial_time
+        
+        # Weak perception: only 2 cones on one side (noise)
+        left_cones = [{'x': 5.0, 'y': 2.0, 'points': 5}, {'x': 6.0, 'y': 2.5, 'points': 5}]
+        right_cones = []  # No right cones
+        
+        with patch('rospy.Time.now', return_value=mock_now):
+            self.driver.update_state(left_cones, right_cones)
+        
+        # Should REMAIN in STOPPING - weak perception cannot recover
+        self.assertEqual(self.driver.state, DriveState.STOPPING)
+        self.assertEqual(self.driver.stop_reason, StopReason.CONES_LOST)
+        # Timer should NOT have been reset
+        self.assertEqual(self.driver.last_valid_time, initial_time)
+
+    def test_weak_perception_continues_elapsed_calculation(self):
+        """Critical fix test: Weak perception should allow elapsed timer to continue toward STOPPING."""
+        from scripts.competition_driver import DriveState, StopReason
+        
+        # Setup: Currently TRACKING with fresh timer
+        self.driver.state = DriveState.TRACKING
+        self.driver.stop_reason = StopReason.NONE
+        self.driver.degraded_timeout = 1.0
+        self.driver.stopping_timeout = 3.0
+        
+        initial_time = MagicMock()
+        initial_time.to_sec.return_value = 50.0
+        self.driver.last_valid_time = initial_time
+        
+        # Time passes with only weak perception (2 cones one side)
+        mock_now = MagicMock()
+        mock_now.to_sec.return_value = 55.0  # 5 seconds elapsed > stopping_timeout
+        
+        # Support time subtraction: now - initial_time = 5 seconds
+        duration_mock = MagicMock()
+        duration_mock.to_sec.return_value = 5.0
+        mock_now.__sub__ = MagicMock(return_value=duration_mock)
+        
+        # Weak perception - should NOT prevent timeout
+        left_cones = [{'x': 5.0, 'y': 2.0, 'points': 5}, {'x': 6.0, 'y': 2.5, 'points': 5}]
+        right_cones = []
+        
+        with patch('rospy.Time.now', return_value=mock_now):
+            self.driver.update_state(left_cones, right_cones)
+        
+        # Should transition to STOPPING because elapsed > stopping_timeout
+        self.assertEqual(self.driver.state, DriveState.STOPPING)
+        self.assertEqual(self.driver.stop_reason, StopReason.CONES_LOST)
+
+    def test_v2x_resume_allowed_when_sensors_fresh(self):
+        """Test: V2X stop zone clear SHOULD resume if all sensors are fresh."""
+        from scripts.competition_driver import DriveState, StopReason
+        
+        # Setup: V2X stop zone was active, now cleared
+        self.driver.state = DriveState.STOPPING
+        self.driver.stop_reason = StopReason.V2X_STOP_ZONE
+        self.driver.v2x_stop_zone = False  # Stop zone cleared
+        self.driver.e_stop = False
+        self.driver.e_stop_latched = False
+        
+        # All sensors fresh
+        now_mock = MagicMock()
+        now_mock.to_sec.return_value = 100.0
+        
+        self.driver.last_lidar_time = now_mock  # Fresh
+        self.driver.last_odom_time = now_mock   # Fresh
+        self.driver.lidar_stale_timeout = 1.0
+        self.driver.odom_stale_timeout = 1.0
+        
+        # Support time subtraction: now - now = 0 seconds (fresh)
+        duration_mock = MagicMock()
+        duration_mock.to_sec.return_value = 0.0
+        now_mock.__sub__ = MagicMock(return_value=duration_mock)
+        
+        with patch('rospy.Time.now', return_value=now_mock):
+            self.driver.check_watchdog()
+        
+        # Should resume to DEGRADED
+        self.assertEqual(self.driver.state, DriveState.DEGRADED)
+        self.assertEqual(self.driver.stop_reason, StopReason.NONE)
 
 
 if __name__ == '__main__':

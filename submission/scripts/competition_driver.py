@@ -498,14 +498,32 @@ class CompetitionDriver:
             self.recovery_start_time = None
             return
         
+        # Check sensor staleness BEFORE any recovery (including V2X resume)
+        # This prevents unsafe motion if sensors are stale when stop zone clears
+        lidar_elapsed = (now - self.last_lidar_time).to_sec()
+        odom_elapsed = (now - self.last_odom_time).to_sec()
+        sensors_stale = (lidar_elapsed > self.lidar_stale_timeout or 
+                        odom_elapsed > self.odom_stale_timeout)
+        
         # V2X stop zone can auto-recover (operational, not emergency)
+        # BUT only if sensors are fresh - otherwise stay stopped
         if self.state == DriveState.STOPPING and self.stop_reason == StopReason.V2X_STOP_ZONE:
+            if sensors_stale:
+                # Sensors went stale while in V2X stop zone - update reason
+                if lidar_elapsed > self.lidar_stale_timeout:
+                    self.stop_reason = StopReason.LIDAR_STALE
+                    self.add_commentary(f"WATCHDOG: V2X cleared but LiDAR stale ({lidar_elapsed:.1f}s)")
+                else:
+                    self.stop_reason = StopReason.ODOM_STALE
+                    self.add_commentary(f"WATCHDOG: V2X cleared but Odom stale ({odom_elapsed:.1f}s)")
+                return
             self.add_commentary("WATCHDOG: V2X stop zone cleared, resuming DEGRADED")
             self.state = DriveState.DEGRADED
             self.stop_reason = StopReason.NONE
             self.recovery_start_time = None
             return
         
+        # Now check sensor staleness for transitions to STOPPING
         lidar_elapsed = (now - self.last_lidar_time).to_sec()
         if lidar_elapsed > self.lidar_stale_timeout:
             if self.state != DriveState.STOPPING or self.stop_reason != StopReason.LIDAR_STALE:
@@ -545,14 +563,19 @@ class CompetitionDriver:
         if self.state == DriveState.STOPPING and self.stop_reason in safety_stop_reasons:
             return  # Watchdog controls recovery for these cases
         
-        has_valid_cones = len(left_cones) >= 1 or len(right_cones) >= 1
+        total_cones = len(left_cones) + len(right_cones)
         has_both_sides = len(left_cones) >= 1 and len(right_cones) >= 1
-        # Require stronger perception quality to refresh timer (prevent noise from resetting)
-        has_strong_perception = has_both_sides or (len(left_cones) + len(right_cones) >= 3)
+        # 3-tier perception model:
+        # - strong: both sides OR 3+ total cones → timer reset + recovery allowed
+        # - weak: 1-2 cones (one side only) → no timer reset, elapsed continues, no recovery
+        # - none: 0 cones → existing timeout logic
+        has_strong_perception = has_both_sides or total_cones >= 3
+        has_weak_perception = total_cones >= 1 and not has_strong_perception
         
-        if has_valid_cones:
+        # Strong perception: allow recovery and reset timer
+        if has_strong_perception:
             if self.state == DriveState.STOPPING and self.stop_reason == StopReason.CONES_LOST:
-                self.add_commentary("Cones recovered, resuming DEGRADED")
+                self.add_commentary("Strong perception recovered, resuming DEGRADED")
                 self.state = DriveState.DEGRADED
                 self.stop_reason = StopReason.NONE
             elif self.state != DriveState.TRACKING and has_both_sides:
@@ -563,17 +586,20 @@ class CompetitionDriver:
                 self.state = DriveState.TRACKING
                 self.stop_reason = StopReason.NONE
             
-            # Only refresh timer with strong perception to prevent single noise cone from blocking STOPPING
-            if has_strong_perception:
-                self.last_valid_time = now
+            # Reset timer only with strong perception
+            self.last_valid_time = now
             
             if left_cones and right_cones:
                 left_y = np.mean([c['y'] for c in left_cones[:3]])
                 right_y = np.mean([c['y'] for c in right_cones[:3]])
                 raw_width = abs(left_y - right_y)
                 self.last_valid_track_width = np.clip(raw_width, self.track_width_min, self.track_width_max)
-        else:
+        
+        # Weak perception: DO NOT reset timer, continue elapsed calculation
+        # Also DO NOT allow recovery from CONES_LOST (prevent noise cone from restarting)
+        if has_weak_perception or total_cones == 0:
             if self.state == DriveState.STOPPING:
+                # Already stopping - don't change state
                 return
             
             elapsed = (now - self.last_valid_time).to_sec()
@@ -605,13 +631,24 @@ class CompetitionDriver:
                 points = points[~np.isnan(points).any(axis=1) & ~np.isinf(points).any(axis=1)]
             
             left, right = self.find_cones_filtered(points)
+            
+            # 3-tier perception check for fallback path gating
+            # Strong: both sides OR 3+ total cones - reliable path
+            # Weak: 1-2 cones on one side only - may be noise
+            # None: 0 cones - no perception
+            total_cones = len(left) + len(right)
+            has_both_sides = len(left) >= 1 and len(right) >= 1
+            has_strong_perception = has_both_sides or total_cones >= 3
+            
             center = self.build_centerline(left, right)
             
             with self.data_lock:
                 self.left_cones = left
                 self.right_cones = right
-                self.centerline = center
-                if center:
+                self.centerline = center  # Current frame (may be noisy)
+                # Only update fallback path with strong perception
+                # Prevents 1-2 noise cones from corrupting last_valid_centerline
+                if has_strong_perception and center:
                     self.last_valid_centerline = center
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"LiDAR callback error: {e}")
