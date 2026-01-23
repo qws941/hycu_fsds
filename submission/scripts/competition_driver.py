@@ -616,8 +616,6 @@ class CompetitionDriver:
     
     def lidar_callback(self, msg):
         try:
-            self.last_lidar_time = rospy.Time.now()
-            self.lidar_received = True
             points = np.array(list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)))
             
             if len(points) == 0:
@@ -625,6 +623,8 @@ class CompetitionDriver:
                     self.left_cones = []
                     self.right_cones = []
                     self.centerline = []
+                self.last_lidar_time = rospy.Time.now()
+                self.lidar_received = True
                 return
             
             if np.any(np.isnan(points)) or np.any(np.isinf(points)):
@@ -650,18 +650,21 @@ class CompetitionDriver:
                 # Prevents 1-2 noise cones from corrupting last_valid_centerline
                 if has_strong_perception and center:
                     self.last_valid_centerline = center
+            
+            self.last_lidar_time = rospy.Time.now()
+            self.lidar_received = True
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"LiDAR callback error: {e}")
     
     def odom_callback(self, msg):
         try:
-            self.last_odom_time = rospy.Time.now()
-            self.odom_received = True
             vx = msg.twist.twist.linear.x
             vy = msg.twist.twist.linear.y
             speed = sqrt(vx**2 + vy**2)
             if np.isfinite(speed):
                 self.current_speed = speed
+                self.last_odom_time = rospy.Time.now()
+                self.odom_received = True
             else:
                 rospy.logwarn_throttle(1.0, "Odom NaN/Inf detected, using last valid speed")
         except Exception as e:
