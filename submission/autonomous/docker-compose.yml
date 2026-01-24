@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  roscore:
+    image: ros:noetic-ros-base-focal
+    container_name: fsds_roscore
+    command: roscore
+    networks:
+      - fsds_network
+    environment:
+      - ROS_MASTER_URI=http://roscore:11311
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'source /opt/ros/noetic/setup.bash && rostopic list' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  fsds_bridge:
+    image: fsds_docker-fsds_bridge:latest
+    container_name: fsds_bridge
+    depends_on:
+      roscore:
+        condition: service_healthy
+    networks:
+      - fsds_network
+    environment:
+      - ROS_MASTER_URI=http://roscore:11311
+      - ROS_HOSTNAME=fsds_bridge
+      - FSDS_HOST_IP=${FSDS_HOST_IP:-host.docker.internal}
+      - FSDS_PORT=${FSDS_PORT:-41451}
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'source /opt/ros/noetic/setup.bash && rostopic list | grep -q /fsds/' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    command: >
+      bash -c "
+        source /opt/ros/noetic/setup.bash &&
+        source /root/Formula-Student-Driverless-Simulator/ros/devel/setup.bash &&
+        roslaunch fsds_ros_bridge fsds_ros_bridge.launch host:=$${FSDS_HOST_IP} port:=$${FSDS_PORT:-41451}
+      "
+    restart: unless-stopped
+
+  autonomous:
+    image: fsds_docker-fsds_dev:latest
+    container_name: fsds_autonomous
+    depends_on:
+      roscore:
+        condition: service_healthy
+      fsds_bridge:
+        condition: service_started
+    networks:
+      - fsds_network
+    environment:
+      - ROS_MASTER_URI=http://roscore:11311
+      - ROS_HOSTNAME=autonomous
+      - PYTHONPATH=/root/catkin_ws/src/autonomous
+      - PYTHONUNBUFFERED=1  # Force unbuffered logging
+    volumes:
+      - ./driver:/root/catkin_ws/src/autonomous/driver:ro
+      - ./modules:/root/catkin_ws/src/autonomous/modules:ro
+      - ./config:/root/catkin_ws/src/autonomous/config:ro
+      - ./tests:/root/catkin_ws/src/autonomous/tests:ro
+      - ./run_all.sh:/root/catkin_ws/src/autonomous/run_all.sh:ro
+    stdin_open: true
+    tty: true
+    command: bash /root/catkin_ws/src/autonomous/run_all.sh
+
+networks:
+  fsds_network:
+    driver: bridge

@@ -1,0 +1,83 @@
+# =============================================================================
+# Competition Driver Parameters
+# Formula Student Driverless Simulator
+# =============================================================================
+# Load in ROS: rosparam load config/driver_params.yaml /competition_driver
+# Override at runtime: rosparam set /competition_driver/max_speed 8.0
+# =============================================================================
+
+competition_driver:
+  # -------------------------
+  # Control Parameters
+  # -------------------------
+  max_throttle: 0.20          # Maximum throttle output [0-1]
+  min_speed: 1.0              # Minimum speed (m/s)
+  max_speed: 2.0              # Maximum speed (m/s) - SUPER SAFE MODE
+  max_steering: 0.5           # Maximum steering angle (rad)
+  wheelbase: 1.5              # Vehicle wheelbase (m)
+
+  # -------------------------
+  # Pure Pursuit Parameters
+  # -------------------------
+  lookahead_base: 2.0         # Base lookahead distance (reduced for tight turns)
+  lookahead_speed_gain: 0.5   # Lookahead = base + speed * gain (more responsive)
+
+  # -------------------------
+  # Cone Detection Parameters
+  # -------------------------
+  cones_range_cutoff: 15.0     # Max detection range (m) - reduced for reliability
+  cone_min_z: -0.3             # Min cone height filter (m) - ground tolerance
+  cone_max_z: 0.5              # Max cone height filter (m) - cone top + margin
+  cone_grouping_threshold: 0.25 # Grid cell size for clustering (m) - slightly larger
+  cone_min_points: 2           # Min points per cluster (near range)
+  cone_max_radius: 0.25        # Max cluster radius (m) - tighter for cone shape
+  cone_max_radius_std: 0.12    # Max radius standard deviation (m)
+
+  # -------------------------
+  # Watchdog Timeouts
+  # -------------------------
+  lidar_stale_timeout: 1.0    # LiDAR data stale threshold (s)
+  odom_stale_timeout: 1.0     # Odometry data stale threshold (s)
+  degraded_timeout: 1.0       # TRACKING -> DEGRADED transition (s)
+  stopping_timeout: 3.0       # DEGRADED -> STOPPING transition (s)
+  recovery_timeout: 1.0       # STOPPING -> DEGRADED recovery (s)
+
+  # -------------------------
+  # Rate Limiting
+  # -------------------------
+  throttle_rate_limit: 2.0    # Max throttle change rate (/s)
+  steering_rate_limit: 3.0    # Max steering change rate (/s)
+  max_lateral_accel: 4.0      # Max lateral acceleration (m/s^2)
+
+# =============================================================================
+# Simple SLAM Parameters
+# =============================================================================
+simple_slam:
+  map_resolution: 0.1         # Grid cell size (m)
+  map_size: 100               # Grid size (cells per axis)
+  decay_rate: 0.001           # Occupancy decay rate per second
+  path_publish_rate: 1.0      # Path publish frequency (Hz)
+
+# =============================================================================
+# V2X RSU Parameters
+# =============================================================================
+v2x_rsu:
+  default_speed_limit: 6.0    # Default speed limit (m/s)
+  publish_rate: 1.0           # Message publish frequency (Hz)
+
+# =============================================================================
+# Lap Timer Parameters
+# =============================================================================
+lap_timer:
+  finish_line_x: 0.0          # Finish line X coordinate (m)
+  finish_line_y: 0.0          # Finish line Y coordinate (m)
+  finish_line_radius: 3.0     # Finish line detection radius (m)
+  min_lap_time: 10.0          # Minimum valid lap time (s)
+
+# =============================================================================
+# Cone Classifier Parameters
+# =============================================================================
+cone_classifier:
+  intensity_threshold: 50.0   # Blue/Yellow intensity threshold
+  marker_scale: 0.3           # RViz marker size (m)
+  marker_lifetime: 0.5        # Marker display duration (s)
