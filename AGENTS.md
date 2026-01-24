@@ -1,8 +1,8 @@
 # FSDS AUTONOMOUS DRIVING - PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-01-21
-**Commit:** 1d661b9
-**Branch:** master
+**Generated:** 2026-01-24
+**Commit:** a7f16b7
+**Branch:** docs/update-agents
 
 ## OVERVIEW
 
@@ -25,7 +25,7 @@ hycu_fsds/
 │   ├── README.md            # Mermaid architecture + Safety section
 │   │
 │   ├── scripts/             # Original monolithic scripts (deprecated backup)
-│   │   ├── competition_driver.py  # 784L - Original Pure Pursuit + V2X
+│   │   ├── competition_driver.py  # 827L - Original Pure Pursuit + V2X
 │   │   ├── simple_slam.py         # 262L - Occupancy grid + TF tree
 │   │   ├── v2x_rsu.py             # 336L - Virtual RSU (6 scenarios)
 │   │   ├── lap_timer.py           # 191L - Performance + HUD
@@ -75,7 +75,7 @@ hycu_fsds/
     └── (same structure)     # Keep synced: rsync -av fsds_docker/ submission/
 ```
 
-**Total Python LOC:** ~5,100 lines (including modular structure)
+**Total Python LOC:** ~5,240 lines (scripts: 2640, src: 2603)
 
 ## WHERE TO LOOK
 

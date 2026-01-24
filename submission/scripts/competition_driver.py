@@ -128,8 +128,10 @@ class CompetitionDriver:
         self.recovery_timeout = rospy.get_param('~recovery_timeout', 1.0)        # New: time to recover from STOPPING
         
         self.cmd_pub = rospy.Publisher('/fsds/control_command', ControlCommand, queue_size=1)
-        rospy.Subscriber('/fsds/lidar/Lidar1', PointCloud2, self.lidar_callback)
-        rospy.Subscriber('/fsds/testing_only/odom', Odometry, self.odom_callback)
+        rospy.Subscriber('/fsds/lidar/Lidar1', PointCloud2, self.lidar_callback, 
+                         queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('/fsds/testing_only/odom', Odometry, self.odom_callback,
+                         queue_size=1, tcp_nodelay=True)
         
         self.debug_state_pub = rospy.Publisher('/debug/state', String, queue_size=1)
         self.debug_speed_pub = rospy.Publisher('/debug/speed', Float32, queue_size=1)
@@ -211,6 +213,7 @@ class CompetitionDriver:
             self.v2x_stop_zone = msg.data
             if msg.data:
                 self.add_commentary("V2X: entering stop zone")
+                self.state = DriveState.STOPPING  # Immediate state change
                 self.stop_reason = StopReason.V2X_STOP_ZONE
             else:
                 self.add_commentary("V2X: exiting stop zone")
@@ -221,6 +224,7 @@ class CompetitionDriver:
             if msg.data:
                 self.e_stop_latched = True  # Latch E-stop - requires node restart
                 self.add_commentary("EMERGENCY STOP activated (latched - restart required)")
+                self.state = DriveState.STOPPING  # Immediate state change
                 self.stop_reason = StopReason.EMERGENCY_STOP
     
     def add_commentary(self, text):
@@ -551,7 +555,8 @@ class CompetitionDriver:
                 self.add_commentary("WATCHDOG: Sensors recovered, attempting resume")
                 self.state = DriveState.DEGRADED
                 self.stop_reason = StopReason.NONE
-                self.recovery_start_time = None
+        self.recovery_start_time = None
+        self.last_fallback_commentary_time = 0.0  # Throttle for fallback commentary
     
     def update_state(self, left_cones, right_cones):
         now = rospy.Time.now()
@@ -716,7 +721,11 @@ class CompetitionDriver:
                     centerline = last_valid_centerline_snapshot
                     self.current_curvature = self.estimate_curvature(centerline)
                     self.current_target_speed = self.min_speed  # Cap speed when using stale data
-                    self.add_commentary("TRACKING: No current centerline, using last valid at min speed")
+                    # Throttle commentary to once per second
+                    now = rospy.Time.now().to_sec()
+                    if now - self.last_fallback_commentary_time > 1.0:
+                        self.add_commentary("TRACKING: No current centerline, using last valid at min speed")
+                        self.last_fallback_commentary_time = now
                 else:
                     # No centerline data at all - brake
                     cmd.throttle = 0.0
