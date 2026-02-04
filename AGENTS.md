@@ -1,97 +1,74 @@
 # FSDS AUTONOMOUS DRIVING - PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-01-25
-**Commit:** f0ae405
-**Branch:** docs/update-agents
+**Generated:** 2026-02-04
+**Commit:** a9b8f67
+**Branch:** main
 
 ## OVERVIEW
 
-Docker-based ROS Noetic environment for Formula Student Driverless Simulator (FSDS) autonomous driving competition. Python scripts control vehicle via ROS topics, connecting to Windows-hosted FSDS simulator.
+Docker-based ROS Noetic environment for Formula Student Driverless Simulator (FSDS) autonomous driving competition. Python scripts control vehicle via ROS topics, connecting to FSDS simulator.
 
 ## STRUCTURE
 
 ```
 hycu_fsds/
-├── AGENTS.md                # This file
-├── .gitlab-ci.yml           # CI/CD pipeline
-├── src/
-│   ├── autonomous/          # Main development directory
-│   │   ├── Dockerfile       # ROS Noetic + FSDS (pinned deps)
-│   │   ├── docker-compose.yml  # 3 services: roscore, fsds_bridge, autonomous
-│   │   ├── .env             # FSDS_HOST_IP (Windows IP)
-│   │   ├── start.sh         # One-click launcher
-│   │   ├── entrypoint.sh    # Container init + ROS sourcing
-│   │   │
-│   │   ├── driver/          # Competition driver
-│   │   │   └── competition_driver.py  # 832L - Pure Pursuit + V2X + 3-tier perception
-│   │   │
-│   │   ├── modules/         # Modular components
-│   │   │   ├── control/     # pure_pursuit.py (96L), speed.py (190L)
-│   │   │   ├── perception/  # cone_detector.py (222L), slam.py (262L), cone_classifier.py (205L)
-│   │   │   └── utils/       # watchdog.py (251L), lap_timer.py (191L)
-│   │   │
-│   │   ├── config/
-│   │   │   └── params.yaml  # All ROS parameters
-│   │   │
-│   │   └── tests/
-│   │       └── test_algorithms.py  # 846L - 29 unit tests
-│   │
-│   └── simulator/           # Windows FSDS settings.json
+├── src/autonomous/      # MAIN DEVELOPMENT (use this)
+│   ├── driver/          # competition_driver.py (1044L)
+│   ├── modules/
+│   │   ├── control/     # Pure functions (no ROS deps)
+│   │   ├── perception/  # LiDAR, SLAM, cone detection
+│   │   └── utils/       # Watchdog, lap timer
+│   ├── config/params.yaml
+│   ├── tests/           # Unit tests (29 test methods)
+│   └── Dockerfile       # Container build
 │
-├── scripts/
-│   └── package.sh           # Distribution packaging
-│
-├── docs/
-│   └── reference_materials/ # Lecture notes (Korean)
-│
-├── dist/                    # Built packages
-│
-└── fsds_docker/             # DEPRECATED - legacy structure
+├── src/simulator/fsds-linux/  # UE4 FSDS binary (164MB)
+├── fsds_docker/         # DEPRECATED - legacy structure
+├── submission/          # Distribution package (auto-generated)
+├── recordings/          # Recording scripts + FSDS Python client
+└── scripts/package.sh   # Build distribution
 ```
 
-**Total Python LOC:** ~3,141 lines
+**Total Python LOC:** ~18,800 lines (90 files)
 
 ## WHERE TO LOOK
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Main driver logic | `src/autonomous/driver/competition_driver.py` | 832 lines, monolithic |
-| Control algorithms | `src/autonomous/modules/control/` | Pure functions, no ROS deps |
+| Main driver logic | `src/autonomous/driver/competition_driver.py` | 1044L, main ROS node |
+| Control algorithms | `src/autonomous/modules/control/` | Pure functions, no ROS |
 | Perception modules | `src/autonomous/modules/perception/` | Cone detection, SLAM |
-| Tune driving params | `src/autonomous/config/params.yaml` | YAML config |
-| Change Windows IP | `src/autonomous/.env` | `FSDS_HOST_IP=your.ip` |
-| Add Python deps | `src/autonomous/Dockerfile` | `pip3 install` section |
+| Tune driving params | `src/autonomous/config/params.yaml` | YAML config, runtime override |
+| Change simulator IP | `src/autonomous/.env` | `FSDS_HOST_IP=your.ip` |
+| Add Python deps | `src/autonomous/Dockerfile` | `pip3 install` section (msgpack-rpc first!) |
 | Run tests | Inside container | `python3 -m pytest tests/ -v` |
+| Start simulator | `src/simulator/fsds-linux/FSDS.sh` | UE4 binary, Vulkan/llvmpipe |
 
 ## CODE MAP
 
 | Symbol | Type | Location | Role |
 |--------|------|----------|------|
-| `CompetitionDriver` | class | driver/competition_driver.py | Main driver (monolithic) |
-| `pure_pursuit_steering` | func | modules/control/pure_pursuit.py | Geometric steering |
-| `get_lookahead_point` | func | modules/control/pure_pursuit.py | Find target on path |
-| `estimate_curvature` | func | modules/control/speed.py | Gradient-based curvature |
+| `CompetitionDriver` | class | driver/competition_driver.py | Main ROS node, state machine |
+| `pure_pursuit_steering` | func | modules/control/pure_pursuit.py | Geometric steering calc |
 | `calculate_target_speed` | func | modules/control/speed.py | v = sqrt(a_lat_max / k) |
-| `apply_rate_limit` | func | modules/control/speed.py | Smooth control changes |
-| `find_cones_filtered` | func | modules/perception/cone_detector.py | Grid BFS clustering O(N) |
-| `build_centerline` | func | modules/perception/cone_detector.py | Left/right -> center path |
+| `find_cones_filtered` | func | modules/perception/cone_detector.py | Grid BFS clustering |
+| `SimpleSLAM` | class | modules/perception/slam.py | Occupancy grid mapping |
+| `Watchdog` | class | modules/utils/watchdog.py | Sensor timeout detection |
 | `DriveState` | enum | modules/utils/watchdog.py | TRACKING/DEGRADED/STOPPING |
-| `StopReason` | enum | modules/utils/watchdog.py | Watchdog stop reasons |
-| `Watchdog` | class | modules/utils/watchdog.py | Sensor timeout monitoring |
+| `LapTimer` | class | modules/utils/lap_timer.py | Lap counting, timing |
 
-## KEY PARAMETERS
-
-All in `config/params.yaml`:
+## KEY PARAMETERS (params.yaml)
 
 | Param | Default | Effect |
 |-------|---------|--------|
-| `max_throttle` | 0.25 | Max acceleration |
-| `min_speed` / `max_speed` | 2.0 / 6.0 m/s | Speed range |
-| `max_steering` | 0.4 rad | Turn sharpness |
-| `lookahead_base` | 4.0m | Pure Pursuit lookahead |
-| `lidar_stale_timeout` | 1.0s | Watchdog threshold |
+| `max_speed` | 7.0 m/s | Speed limit |
+| `lookahead_base` | 3.5m | Pure Pursuit lookahead |
+| `control_loop_rate` | 20 Hz | Main loop frequency |
+| `lidar_stale_timeout` | 3.0s | Watchdog threshold |
 | `cone_grouping_threshold` | 0.2m | Grid cell size |
-| `cone_min_points` | 3 | Min points per cluster |
+| `max_lateral_accel` | 6.0 m/s² | Cornering limit |
+| `safety_margin` | 0.3m | Track edge buffer |
+| `single_side_offset` | 1.0m | One-sided cone offset |
 
 ## ROS TOPICS
 
@@ -101,35 +78,35 @@ All in `config/params.yaml`:
 | `/fsds/lidar/Lidar1` | PointCloud2 | Sub |
 | `/fsds/testing_only/odom` | Odometry | Sub |
 | `/v2x/speed_limit` | Float32 | Sub |
-| `/v2x/hazard` | Bool | Sub |
-| `/v2x/stop_zone` | Bool | Sub |
+| `/lap/count` | Int32 | Pub |
 
 ## CONVENTIONS
 
 - **No requirements.txt**: Python deps in Dockerfile only
-- **Windows IP required**: Set `FSDS_HOST_IP` in `.env` before running
+- **Windows/Linux IP required**: Set `FSDS_HOST_IP` in `.env` before running
 - **Thread safety**: `threading.Lock` for callback-main loop data
-- **Exception safety**: `try/except Exception:` in all ROS callbacks
-- **Data validation**: `np.isfinite()` guards on odom, V2X, control values
-- **PYTHONPATH**: Must include `/root/catkin_ws/src/autonomous`
+- **Pure control/**: No ROS dependencies in `modules/control/`
+- **Type hints**: Required in all new code
+- **Pip order**: `msgpack-rpc-python` MUST install before `airsim`
 
 ## ANTI-PATTERNS
 
 | Forbidden | Why |
 |-----------|-----|
-| `pip install` in container | Add to Dockerfile for reproducibility |
+| `pip install` in container | Add to Dockerfile |
 | Hardcoded IPs | Use `.env` file |
-| Missing `rospy.init_node` | Every driver must call in `__init__` |
-| `queue_size > 1` for control | Real-time control needs `queue_size=1` |
-| Bare `except:` | Always `except Exception:` |
-| O(N^2) clustering | Use grid-based O(N) in hot paths |
 | Edit `fsds_docker/` | DEPRECATED - use `src/autonomous/` |
+| ROS in `modules/control/` | Keep pure for testing |
+| Missing `rospy.init_node` | Every driver needs it |
+| `queue_size > 1` for control | Real-time needs `queue_size=1` |
+| Generic `except Exception` | Catch specific exceptions |
+| `print()` for debug | Use `rospy.logdebug()` |
 
 ## COMMANDS
 
 ```bash
-# Start environment
-cd src/autonomous && ./start.sh
+# Start environment (from src/autonomous/)
+./start.sh
 
 # Enter dev container
 docker exec -it fsds_autonomous bash
@@ -137,44 +114,52 @@ docker exec -it fsds_autonomous bash
 # Run driver (inside container)
 python3 /root/catkin_ws/src/autonomous/driver/competition_driver.py
 
+# Run driver with lap limit
+python3 driver/competition_driver.py _target_laps:=1
+
 # Run tests
 python3 -m pytest tests/ -v
 
-# View topics
-rostopic list
-rostopic echo /fsds/testing_only/odom
+# Build distribution package
+./scripts/package.sh
 
-# Tune params at runtime
-rosparam set /competition_driver/max_speed 8.0
-
-# Stop all
-docker-compose down
+# Record screen (1280x800)
+DISPLAY=:0 ffmpeg -f x11grab -video_size 1280x800 -framerate 30 -i :0 \
+  -c:v libx264 -preset ultrafast -crf 22 output.mp4
 ```
 
-## TESTING
+## THREE CODEBASES
 
-| Test Class | Count | Coverage |
-|------------|-------|----------|
-| TestCompetitionDriver | 6 | Pure Pursuit, curvature, speed |
-| TestSimpleSLAM | 2 | Grid conversion |
-| TestWatchdogStateMachine | 11 | E-stop, V2X, perception tiers |
-| TestE2EIntegration | 8 | End-to-end scenarios |
-| **Total** | **27** | Core algorithms |
+| Directory | Status | Use |
+|-----------|--------|-----|
+| `src/autonomous/` | **ACTIVE** | All development here |
+| `fsds_docker/` | DEPRECATED | Legacy, do not modify |
+| `submission/` | AUTO-GENERATED | Built by package.sh |
 
-Run: `python3 -m pytest tests/ -v` (inside container)
+## STATE MACHINE
 
-## ALGORITHMS
+```
+TRACKING ─(cones lost 3s)─> DEGRADED ─(cones lost 5s)─> STOPPING
+    ^                            │                          │
+    └──(cones detected)──────────┴───(sensor recovery)──────┘
+```
 
-1. **Cone Detection**: Grid BFS clustering O(N), Z-height filter (-0.3m ~ 0.5m)
-2. **Steering**: Pure Pursuit `delta = atan2(2 * wheelbase * sin(alpha) / L)`
-3. **Speed**: Curvature-based `v = sqrt(a_lat_max / kappa)`
-4. **State Machine**: TRACKING -> DEGRADED (1s) -> STOPPING (3s)
-5. **3-tier Perception**: strong (both sides OR 3+) / weak (1-2 one side) / none
+## KNOWN ISSUES
+
+| Issue | Status | Notes |
+|-------|--------|-------|
+| docker-compose `service_started` | BUG | Should be `service_healthy` for fsds_bridge |
+| `cone_min_z: -1.0` | LOOSE | Tighten to `-0.3` for less ground noise |
+| `cone_min_points: 1` | LOOSE | Increase to `3` for noise filtering |
+| Cone knockdown | EXPECTED | FSDS PhysX physics - cones fall when hit |
+| `host.docker.internal` | LINUX FAIL | Use explicit IP on Linux |
 
 ## NOTES
 
-- Windows FSDS simulator must be running BEFORE `start.sh`
+- FSDS simulator must be running BEFORE `start.sh`
 - ROS Bridge connects via port 41451
 - Container scripts auto-mounted - edit on host, run in container
-- `fsds_docker/` is DEPRECATED - all development in `src/autonomous/`
 - All drivers follow 20Hz control loop pattern
+- Cone detection: Grid BFS clustering with z-filter [-0.5m, 0.5m]
+- TrainingMap is the only working map (CompetitionMap1-3 fail to load)
+- Collision box: 100cm(W) × 180cm(L) × 50cm(H) - larger than visual model

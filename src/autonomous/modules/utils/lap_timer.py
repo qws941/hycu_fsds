@@ -50,8 +50,8 @@ class LapTimer:
         
         self.start_x = None
         self.start_y = None
-        self.start_threshold = 3.0
-        self.min_lap_distance = 50.0
+        self.start_threshold = 40.0  # Increased for CompetitionTrack finish line tolerance
+        self.min_lap_distance = 20.0
         
         self.lap_count = 0
         self.lap_times = []
@@ -63,7 +63,7 @@ class LapTimer:
         self.max_speed = 0.0
         self.away_from_start = False
         
-        self.lap_count_pub = rospy.Publisher('/lap/count', self._Int32, queue_size=1)
+        self.lap_count_pub = rospy.Publisher('/lap/count', self._Int32, queue_size=1, latch=True)
         self.lap_time_pub = rospy.Publisher('/lap/current_time', self._Float32, queue_size=1)
         self.best_lap_pub = rospy.Publisher('/lap/best_time', self._Float32, queue_size=1)
         self.distance_pub = rospy.Publisher('/lap/distance', self._Float32, queue_size=1)

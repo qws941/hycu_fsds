@@ -123,6 +123,11 @@ def find_cones_filtered(
     left = sorted([c for c in cones if c['y'] > 0], key=lambda c: c['x'])
     right = sorted([c for c in cones if c['y'] <= 0], key=lambda c: c['x'])
     
+    if cones:
+        y_values = [c['y'] for c in cones]
+        print(f"[DEBUG] Total cones: {len(cones)}, Y range: [{min(y_values):.2f}, {max(y_values):.2f}]")
+        print(f"[DEBUG] Left(y>0): {len(left)}, Right(y<=0): {len(right)}")
+    
     return left, right
 
 

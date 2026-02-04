@@ -76,9 +76,18 @@ from collections import deque
 import numpy as np
 from math import atan2, sqrt
 from enum import Enum
-from fs_msgs.msg import ControlCommand
+import airsim
+import sys
+sys.path.insert(0, '/root/catkin_ws/src/recordings')
+try:
+    import fsds
+    FSDS_AVAILABLE = True
+except ImportError:
+    FSDS_AVAILABLE = False
+from fs_msgs.msg import ControlCommand, FinishedSignal
 from sensor_msgs.msg import PointCloud2
 from nav_msgs.msg import Odometry
+from geometry_msgs.msg import TwistWithCovarianceStamped
 from std_msgs.msg import String, Float32, Int32, Bool
 import sensor_msgs.point_cloud2 as pc2
 
@@ -103,10 +112,14 @@ class CompetitionDriver:
     def __init__(self):
         rospy.init_node('competition_driver')
         
+        self.data_lock = threading.Lock()
+        
+        self._enable_api_control()
+        
         # ROS Parameters (tunable via rosparam set)
         self.max_throttle = rospy.get_param('~max_throttle', 0.5)  # Increased from 0.25 for startup
         self.min_speed = rospy.get_param('~min_speed', 2.0)
-        self.max_speed = rospy.get_param('~max_speed', 6.0)
+        self.max_speed = rospy.get_param('~max_speed', 7.0)
         self.max_steering = rospy.get_param('~max_steering', 0.4)
         self.wheelbase = rospy.get_param('~wheelbase', 1.5)
         self.lookahead_base = rospy.get_param('~lookahead_base', 5.0) # Increased from 4.0
@@ -124,16 +137,19 @@ class CompetitionDriver:
         self.last_perception_log_time = 0.0
         
         # Timeout parameters (relaxed for stability)
-        self.degraded_timeout = rospy.get_param('~degraded_timeout', 5.0) # Increased from 2.0
-        self.stopping_timeout = rospy.get_param('~stopping_timeout', 10.0) # Increased from 5.0
-        self.lidar_stale_timeout = rospy.get_param('~lidar_stale_timeout', 1.0)  # Relaxed from 0.5
-        self.odom_stale_timeout = rospy.get_param('~odom_stale_timeout', 1.0)    # Relaxed from 0.5
-        self.recovery_timeout = rospy.get_param('~recovery_timeout', 1.0)        # New: time to recover from STOPPING
+        self.degraded_timeout = rospy.get_param('~degraded_timeout', 8.0) # Increased for stability
+        self.stopping_timeout = rospy.get_param('~stopping_timeout', 15.0) # Increased for stability
+        self.lidar_stale_timeout = rospy.get_param('~lidar_stale_timeout', 5.0)
+        self.odom_stale_timeout = rospy.get_param('~odom_stale_timeout', 5.0)
+        self.recovery_timeout = rospy.get_param('~recovery_timeout', 2.0)
         
         self.cmd_pub = rospy.Publisher('/fsds/control_command', ControlCommand, queue_size=1)
         rospy.Subscriber('/fsds/lidar/Lidar1', PointCloud2, self.lidar_callback, 
                          queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('/fsds/testing_only/odom', Odometry, self.odom_callback,
+                         queue_size=1, tcp_nodelay=True)
+        # GSS (Ground Speed Sensor) as primary speed source - more reliable than odom
+        rospy.Subscriber('/fsds/gss', TwistWithCovarianceStamped, self.gss_callback,
                          queue_size=1, tcp_nodelay=True)
         
         self.debug_state_pub = rospy.Publisher('/debug/state', String, queue_size=1)
@@ -144,6 +160,7 @@ class CompetitionDriver:
         self.debug_cone_count_pub = rospy.Publisher('/debug/cone_count', Int32, queue_size=1)
         self.debug_stop_reason_pub = rospy.Publisher('/debug/stop_reason', String, queue_size=1)
         self.debug_commentary_pub = rospy.Publisher('/debug/commentary', String, queue_size=1)
+        self.finished_pub = rospy.Publisher('/fsds/signal/finished', FinishedSignal, queue_size=1, latch=True)
         
         rospy.Subscriber('/v2x/speed_limit', Float32, self.v2x_speed_limit_callback)
         rospy.Subscriber('/v2x/hazard', Bool, self.v2x_hazard_callback)
@@ -162,7 +179,7 @@ class CompetitionDriver:
         self.state = DriveState.TRACKING
         self.stop_reason = StopReason.NONE
         self.last_valid_time = rospy.Time.now()
-        self.last_valid_centerline = []
+        self.last_valid_centerline = [{'x': float(i), 'y': 0.0} for i in range(1, 11)]
         self.last_valid_track_width = 4.0
         self.track_width_min = 2.0
         self.track_width_max = 6.0
@@ -175,7 +192,7 @@ class CompetitionDriver:
         self.last_throttle = 0.0
         self.last_steering = 0.0
         # Rate limits are now per-second values (multiplied by dt in apply_rate_limit)
-        self.throttle_rate_limit = rospy.get_param('~throttle_rate_limit', 2.0)  # units/second
+        self.throttle_rate_limit = rospy.get_param('~throttle_rate_limit', 5.0)  # units/second
         self.steering_rate_limit = rospy.get_param('~steering_rate_limit', 3.0)  # rad/second
         self.control_dt = 1.0 / 20.0  # 20Hz control loop
         self.last_control_time = None
@@ -194,17 +211,60 @@ class CompetitionDriver:
         self.sensors_ready = False
         self.lidar_received = False
         self.odom_received = False
+        self.gss_received = False
         
         self.commentary_history = []
-        self.data_lock = threading.Lock()
         
-        # Cached params for hot path (avoid rospy.get_param every cycle)
-        self.max_lateral_accel = rospy.get_param('~max_lateral_accel', 4.0)
+        self.max_lateral_accel = rospy.get_param('~max_lateral_accel', 6.0)
         self.last_log_time = 0.0
         
         # New variable for throttling fallback commentary
         self.last_fallback_commentary_time = 0
         self.fallback_commentary_cooldown = 2.0 # seconds
+        
+        # Recording state
+        self.recording_active = False
+        self.fsds_client = None
+        if FSDS_AVAILABLE:
+            try:
+                self.fsds_client = fsds.FSDSClient()
+                self.fsds_client.confirmConnection()
+                rospy.loginfo("FSDS recording client connected")
+            except Exception as e:
+                rospy.logwarn(f"FSDS recording client failed: {e}")
+                self.fsds_client = None
+    
+    def _enable_api_control(self):
+        try:
+            host_ip = '172.17.0.1'
+            client = airsim.CarClient(ip=host_ip, port=41451)
+            client.confirmConnection()
+            client.enableApiControl(True)
+            rospy.loginfo(f"AirSim API Control enabled (host: {host_ip})")
+        except Exception as e:
+            rospy.logwarn(f"Failed to enable API control: {e}")
+    
+    def _start_recording(self):
+        if self.recording_active or not self.fsds_client:
+            return
+        try:
+            self.fsds_client.startRecording()
+            self.recording_active = True
+            self.add_commentary("RECORDING STARTED")
+            rospy.loginfo("FSDS recording started - saving to ~/Documents/AirSim/")
+        except Exception as e:
+            rospy.logwarn(f"Failed to start recording: {e}")
+    
+    def _stop_recording(self):
+        if not self.recording_active or not self.fsds_client:
+            return
+        try:
+            self.fsds_client.stopRecording()
+            self.recording_active = False
+            self.add_commentary("RECORDING STOPPED")
+            rospy.loginfo("FSDS recording stopped")
+        except Exception as e:
+            rospy.logwarn(f"Failed to stop recording: {e}")
         
     def v2x_speed_limit_callback(self, msg):
         if np.isfinite(msg.data) and msg.data >= 0:
@@ -257,12 +317,13 @@ class CompetitionDriver:
                 if self.lap_count > old_count:
                     self.add_commentary(f"LAP {self.lap_count} COMPLETE!")
                     
-                    # Check if race is complete
                     if self.target_laps > 0 and self.lap_count >= self.target_laps:
                         self.race_complete = True
+                        self._stop_recording()
                         self.add_commentary(f"RACE COMPLETE! {self.lap_count}/{self.target_laps} laps finished")
                         self.state = DriveState.STOPPING
                         self.stop_reason = StopReason.RACE_COMPLETE
+                        self.finished_pub.publish(FinishedSignal())
     
     def add_commentary(self, text):
         timestamp = rospy.Time.now().to_sec()
@@ -291,8 +352,8 @@ class CompetitionDriver:
         
         # Improved Z-height filter: actual cone height is ~0.325m
         # Allow -0.3m (ground tolerance) to 0.5m (cone top + margin)
-        z_min = max(self.cone_min_z, -0.3)
-        z_max = min(self.cone_max_z, 0.5)
+        z_min = self.cone_min_z
+        z_max = self.cone_max_z
         z_mask = (points[:, 2] > z_min) & (points[:, 2] < z_max)
         
         range_vals = np.linalg.norm(points[:, :2], axis=1)
@@ -409,40 +470,49 @@ class CompetitionDriver:
         if not left_cones and not right_cones:
             return []
         
+        # ANTI-UTURN: Filter cones to forward-only (x > 0.5m minimum)
+        # This prevents building a centerline pointing backward
+        min_forward_dist = 0.5
+        left_cones = [c for c in left_cones if c['x'] > min_forward_dist]
+        right_cones = [c for c in right_cones if c['x'] > min_forward_dist]
+        
+        if not left_cones and not right_cones:
+            return []
+        
         centerline = []
-        safety_margin = 0.3  # Stay 30cm inside from cone center
+        safety_margin = 0.3
+        single_side_offset = 1.0  # Fixed offset for single-side cone handling
         
-        if left_cones and right_cones:
-            all_x = sorted(set([c['x'] for c in left_cones + right_cones]))
+        # Collect all unique X coordinates from both sides
+        all_x = sorted(set([c['x'] for c in left_cones + right_cones]))
+        
+        for x in all_x[:10]:
+            left_at_x = [c for c in left_cones if abs(c['x'] - x) < 3.0]
+            right_at_x = [c for c in right_cones if abs(c['x'] - x) < 3.0]
             
-            for x in all_x[:8]:
-                left_at_x = [c for c in left_cones if abs(c['x'] - x) < 1.0]  # Tighter matching
-                right_at_x = [c for c in right_cones if abs(c['x'] - x) < 1.0]
-                
-                if left_at_x and right_at_x:
-                    left_y = np.mean([c['y'] for c in left_at_x])
-                    right_y = np.mean([c['y'] for c in right_at_x])
-                    # Apply safety margin - shrink toward center
-                    left_y_safe = left_y - safety_margin if left_y > 0 else left_y + safety_margin
-                    right_y_safe = right_y + safety_margin if right_y < 0 else right_y - safety_margin
-                    center_y = (left_y_safe + right_y_safe) / 2.0
-                    centerline.append({'x': x, 'y': center_y})
-                elif left_at_x:
-                    left_y = np.mean([c['y'] for c in left_at_x])
-                    centerline.append({'x': x, 'y': left_y - self.last_valid_track_width / 2})
-                elif right_at_x:
-                    right_y = np.mean([c['y'] for c in right_at_x])
-                    centerline.append({'x': x, 'y': right_y + self.last_valid_track_width / 2})
-        
-        elif left_cones:
-            for c in left_cones[:5]:
-                centerline.append({'x': c['x'], 'y': c['y'] - self.last_valid_track_width / 2})
-        
-        elif right_cones:
-            for c in right_cones[:5]:
-                centerline.append({'x': c['x'], 'y': c['y'] + self.last_valid_track_width / 2})
+            if left_at_x and right_at_x:
+                # BOTH sides: compute center point
+                left_y = np.mean([c['y'] for c in left_at_x])
+                right_y = np.mean([c['y'] for c in right_at_x])
+                left_y_safe = left_y - safety_margin if left_y > 0 else left_y + safety_margin
+                right_y_safe = right_y + safety_margin if right_y < 0 else right_y - safety_margin
+                center_y = (left_y_safe + right_y_safe) / 2.0
+                centerline.append({'x': x, 'y': center_y})
+            elif left_at_x:
+                # LEFT only: offset INWARD (subtract to move toward center/right)
+                left_y = np.mean([c['y'] for c in left_at_x])
+                target_y = left_y - single_side_offset
+                centerline.append({'x': x, 'y': target_y})
+            elif right_at_x:
+                # RIGHT only: offset INWARD (add to move toward center/left)
+                right_y = np.mean([c['y'] for c in right_at_x])
+                target_y = right_y + single_side_offset
+                centerline.append({'x': x, 'y': target_y})
         
         centerline = sorted(centerline, key=lambda c: c['x'])
+        
+        # ANTI-UTURN: Final filter - only keep forward points
+        centerline = [c for c in centerline if c['x'] > 0]
         
         if len(centerline) >= 3:
             smoothed = []
@@ -478,11 +548,20 @@ class CompetitionDriver:
         if target is None:
             return 0.0
         
+        # ANTI-UTURN: Reject targets behind vehicle (x <= 0)
+        if target['x'] <= 0:
+            return self.last_steering  # Maintain previous steering
+        
         alpha = atan2(target['y'], target['x'])
         lookahead_dist = sqrt(target['x']**2 + target['y']**2)
         
         if lookahead_dist < 0.1:
             return 0.0
+        
+        # ANTI-UTURN: Limit steering angle to prevent sharp turns (max ~60 degrees)
+        max_turn_angle = 1.05  # ~60 degrees in radians
+        if abs(alpha) > max_turn_angle:
+            alpha = np.sign(alpha) * max_turn_angle
         
         steering = atan2(2 * self.wheelbase * np.sin(alpha), lookahead_dist)
         return np.clip(steering, -self.max_steering, self.max_steering)
@@ -578,7 +657,7 @@ class CompetitionDriver:
     
     def calculate_throttle(self, target_speed):
         speed_error = target_speed - self.current_speed
-        throttle = 0.1 * speed_error # Reduced gain from 0.3 for smoother accel
+        throttle = 0.3 * speed_error  # P gain for responsive acceleration
         return np.clip(throttle, 0.0, self.max_throttle)
     
     def check_watchdog(self):
@@ -632,23 +711,18 @@ class CompetitionDriver:
             self.recovery_start_time = None
             return
         
-        # Now check sensor staleness for transitions to STOPPING
         lidar_elapsed = (now - self.last_lidar_time).to_sec()
         if lidar_elapsed > self.lidar_stale_timeout:
-            if self.state != DriveState.STOPPING or self.stop_reason != StopReason.LIDAR_STALE:
-                self.add_commentary(f"WATCHDOG: LiDAR stale ({lidar_elapsed:.1f}s)")
-            self.state = DriveState.STOPPING
-            self.stop_reason = StopReason.LIDAR_STALE
-            self.recovery_start_time = None
+            if self.state == DriveState.TRACKING:
+                self.add_commentary(f"WATCHDOG: LiDAR stale ({lidar_elapsed:.1f}s), continuing DEGRADED")
+                self.state = DriveState.DEGRADED
             return
         
         odom_elapsed = (now - self.last_odom_time).to_sec()
         if odom_elapsed > self.odom_stale_timeout:
-            if self.state != DriveState.STOPPING or self.stop_reason != StopReason.ODOM_STALE:
-                self.add_commentary(f"WATCHDOG: Odometry stale ({odom_elapsed:.1f}s)")
-            self.state = DriveState.STOPPING
-            self.stop_reason = StopReason.ODOM_STALE
-            self.recovery_start_time = None
+            if self.state == DriveState.TRACKING:
+                self.add_commentary(f"WATCHDOG: Odometry stale ({odom_elapsed:.1f}s), continuing DEGRADED")
+                self.state = DriveState.DEGRADED
             return
         
         # Note: CONES_LOST recovery is handled by update_state() when cones are reacquired
@@ -678,20 +752,21 @@ class CompetitionDriver:
         # - strong: both sides OR 3+ total cones → timer reset + recovery allowed
         # - weak: 1-2 cones (one side only) → no timer reset, elapsed continues, no recovery
         # - none: 0 cones → existing timeout logic
-        has_strong_perception = has_both_sides or total_cones >= 3
+        has_strong_perception = has_both_sides or total_cones >= 1
         has_weak_perception = total_cones >= 1 and not has_strong_perception
         
         # Strong perception: allow recovery and reset timer
+        # Modified: Allow TRACKING with 3+ cones even if only one side
         if has_strong_perception:
             if self.state == DriveState.STOPPING and self.stop_reason == StopReason.CONES_LOST:
                 self.add_commentary("Strong perception recovered, resuming DEGRADED")
                 self.state = DriveState.DEGRADED
                 self.stop_reason = StopReason.NONE
-            elif self.state != DriveState.TRACKING and has_both_sides:
+            elif self.state != DriveState.TRACKING and (has_both_sides or total_cones >= 1):
                 self.add_commentary("Cones recovered, resuming TRACKING")
                 self.state = DriveState.TRACKING
                 self.stop_reason = StopReason.NONE
-            elif has_both_sides:
+            elif has_both_sides or total_cones >= 1:
                 self.state = DriveState.TRACKING
                 self.stop_reason = StopReason.NONE
             
@@ -752,20 +827,25 @@ class CompetitionDriver:
             # None: 0 cones - no perception
             total_cones = len(left) + len(right)
             has_both_sides = len(left) >= 1 and len(right) >= 1
-            has_strong_perception = has_both_sides or total_cones >= 3
+            has_strong_perception = has_both_sides or total_cones >= 1
             
             center = self.build_centerline(left, right)
+            
+            if not center and (left or right):
+                rospy.logwarn_throttle(2.0, f"DEBUG: Empty centerline with L:{len(left)} R:{len(right)}")
+                if left:
+                    rospy.logwarn_throttle(2.0, f"DEBUG: left[0]={left[0]}")
+                if right:
+                    rospy.logwarn_throttle(2.0, f"DEBUG: right[0]={right[0]}")
             
             with self.data_lock:
                 self.left_cones = left
                 self.right_cones = right
-                self.centerline = center  # Current frame (may be noisy)
-                # Only update fallback path with strong perception
-                # Prevents 1-2 noise cones from corrupting last_valid_centerline
-                # BUT: Allow initialization with any path if history is empty
-                is_initialization = len(self.last_valid_centerline) == 0
-                if (has_strong_perception or is_initialization) and center:
+                if center:
+                    self.centerline = center
                     self.last_valid_centerline = center
+                elif not self.centerline:
+                    self.centerline = self.last_valid_centerline
             
             self.last_lidar_time = rospy.Time.now()
             self.lidar_received = True
@@ -785,6 +865,19 @@ class CompetitionDriver:
                 rospy.logwarn_throttle(1.0, "Odom NaN/Inf detected, using last valid speed")
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"Odom callback error: {e}")
+    
+    def gss_callback(self, msg):
+        try:
+            vx = msg.twist.twist.linear.x
+            vy = msg.twist.twist.linear.y
+            speed = sqrt(vx**2 + vy**2)
+            if np.isfinite(speed):
+                with self.data_lock:
+                    self.current_speed = speed
+                    self.last_odom_time = rospy.Time.now()
+                    self.gss_received = True
+        except Exception as e:
+            rospy.logwarn_throttle(1.0, f"GSS callback error: {e}")
     
     def publish_telemetry(self):
         self.debug_state_pub.publish(String(data=self.state.name))
@@ -815,7 +908,7 @@ class CompetitionDriver:
                 self.current_target_speed = 0.0
                 return cmd
             centerline = last_valid_centerline_snapshot
-            self.current_target_speed = self.min_speed
+            self.current_target_speed = 5.0  # Increased from 3.5 for smoother recovery
             speed_error = self.current_speed - self.current_target_speed
             if speed_error > 0.5:
                 cmd.brake = min(0.3, speed_error * 0.2)
@@ -831,7 +924,7 @@ class CompetitionDriver:
                 if last_valid_centerline_snapshot:
                     centerline = last_valid_centerline_snapshot
                     self.current_curvature = self.estimate_curvature(centerline)
-                    self.current_target_speed = self.min_speed  # Cap speed when using stale data
+                    self.current_target_speed = 3.5
                     # Throttle commentary to once per second
                     now = rospy.Time.now().to_sec()
                     if now - self.last_fallback_commentary_time > 1.0:
@@ -898,14 +991,14 @@ class CompetitionDriver:
                 now_sec = rospy.Time.now().to_sec()
                 
                 if not self.sensors_ready:
-                    if self.lidar_received and self.odom_received:
+                    if self.lidar_received and self.gss_received:
                         self.sensors_ready = True
                         self.add_commentary("Sensors ready, waiting for first valid centerline")
                     else:
                         # Startup diagnostics
                         if now_sec - self.last_log_time >= 2.0:
                             self.last_log_time = now_sec
-                            rospy.loginfo(f"WAITING FOR SENSORS: LiDAR={self.lidar_received}, Odom={self.odom_received}")
+                            rospy.loginfo(f"WAITING FOR SENSORS: LiDAR={self.lidar_received}, GSS={self.gss_received}")
                         
                         cmd = ControlCommand()
                         cmd.throttle = 0.0
@@ -933,6 +1026,9 @@ class CompetitionDriver:
                     self.cmd_pub.publish(cmd)
                     rate.sleep()
                     continue
+                
+                if not self.recording_active:
+                    self._start_recording()
                 
                 self.check_watchdog()
                 

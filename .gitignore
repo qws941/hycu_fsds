@@ -33,3 +33,7 @@ nohup.out
 
 # Local environment (keep .env.example, ignore actual .env in root)
 /.env
+
+# Large binary files (recordings, simulator)
+recordings/
+src/simulator/fsds-linux/

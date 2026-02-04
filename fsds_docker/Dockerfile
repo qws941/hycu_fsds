@@ -62,10 +62,11 @@ RUN pip3 install --no-cache-dir \
     msgpack-rpc-python==0.4.1 \
     pytest==8.3.5
 
-# FSDS Python client (official package for simulator communication)
-RUN pip3 install --no-cache-dir fsds
-
+# FSDS Python client - install from official repo (pip 'fsds' is wrong package)
 RUN pip3 install --no-cache-dir airsim==1.8.1
+
+# Install FSDS client from Formula-Student-Driverless-Simulator repo
+RUN pip3 install --no-cache-dir git+https://github.com/FS-Driverless/Formula-Student-Driverless-Simulator.git#subdirectory=python
 
 # ===========================================
 # ROS Workspace Setup

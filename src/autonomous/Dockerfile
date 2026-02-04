@@ -15,11 +15,12 @@ RUN apt-get update && apt-get install -y \
     libyaml-cpp-dev libcurl4-openssl-dev libeigen3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Python Dependencies
-RUN pip3 install --no-cache-dir \
+# Python Dependencies - msgpack-rpc-python MUST be installed first (airsim dependency)
+RUN pip3 install --no-cache-dir msgpack-rpc-python==0.4.1 && \
+    pip3 install --no-cache-dir \
     numpy==1.24.3 scipy==1.10.1 matplotlib==3.7.2 \
-    opencv-python==4.8.0.74 msgpack-rpc-python==0.4.1 \
-    pytest==8.3.5 fsds airsim==1.8.1
+    opencv-python==4.8.0.74 pytest==8.3.5 && \
+    pip3 install --no-cache-dir airsim==1.8.1 fsds
 
 # ROS Workspace
 WORKDIR /root
