@@ -1,165 +1,220 @@
-# FSDS AUTONOMOUS DRIVING - PROJECT KNOWLEDGE BASE
+# PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-02-04
-**Commit:** a9b8f67
-**Branch:** main
+**Generated:** 2026-02-26
+**Commit:** c6ea65a
+**Branch:** master
 
 ## OVERVIEW
 
-Docker-based ROS Noetic environment for Formula Student Driverless Simulator (FSDS) autonomous driving competition. Python scripts control vehicle via ROS topics, connecting to FSDS simulator.
+GitHub community health files **Single Source of Truth (SSoT)** for all `qws941` repositories. Contains governance files, reusable CI/CD workflows, issue templates, and label definitions that auto-sync to 10+ downstream repos. No application code — config and policy only.
 
 ## STRUCTURE
 
+```text
+./
+├── .github/
+│   ├── workflows/
+│   │   ├── _ci-node.yml            # Reusable Node.js CI (workflow_call)
+│   │   ├── _ci-python.yml          # Reusable Python CI (workflow_call)
+│   │   ├── _deploy-cf-worker.yml   # Reusable CF Worker deploy (workflow_call)
+│   │   ├── auto-merge.yml          # Dependabot + owner auto-merge (synced)
+│   │   ├── labeler.yml             # PR auto-labeling workflow (synced)
+│   │   ├── stale.yml               # Stale issue cleanup 14d+5d (synced)
+│   │   └── sync-files.yml          # File sync orchestrator (push to master)
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.yml          # Structured bug report form
+│   │   ├── feature_request.yml     # Structured feature request form
+│   │   └── config.yml              # Blank issues disabled, security redirect
+│   ├── CODEOWNERS                  # * @qws941
+│   ├── FUNDING.yml                 # github: qws941
+│   ├── PULL_REQUEST_TEMPLATE.md    # What/Why/Kind/Changes/Testing/Checklist
+│   ├── copilot-instructions.md     # SSoT context, 5 rules, key file table
+│   ├── dependabot.yml              # Weekly github-actions updates
+│   ├── labeler.yml                 # PR auto-label path rules
+│   └── sync.yml                    # Sync target config: 2 groups, 10 repos
+├── scripts/
+│   ├── labels.yml                  # 17 standard labels (type:*/priority:*/status:*)
+│   └── sync-labels.sh              # gh CLI label sync script
+├── profile/
+│   └── README.md                   # GitHub profile page content
+├── .editorconfig                   # 2-space JS/TS/YAML, 4-space Python, tabs Makefile
+├── CODE_OF_CONDUCT.md              # Contributor Covenant v2.1
+├── CONTRIBUTING.md                 # Trunk-based dev, conventional commits, review policy
+├── LICENSE                         # MIT
+├── OWNERS                          # Google3-style: approvers + reviewers = qws941
+└── SECURITY.md                     # Security policy: security@jclee.me, 48h SLA
 ```
-hycu_fsds/
-├── src/autonomous/      # MAIN DEVELOPMENT (use this)
-│   ├── driver/          # competition_driver.py (1044L)
-│   ├── modules/
-│   │   ├── control/     # Pure functions (no ROS deps)
-│   │   ├── perception/  # LiDAR, SLAM, cone detection
-│   │   └── utils/       # Watchdog, lap timer
-│   ├── config/params.yaml
-│   ├── tests/           # Unit tests (29 test methods)
-│   └── Dockerfile       # Container build
-│
-├── src/simulator/fsds-linux/  # UE4 FSDS binary (164MB)
-├── fsds_docker/         # DEPRECATED - legacy structure
-├── submission/          # Distribution package (auto-generated)
-├── recordings/          # Recording scripts + FSDS Python client
-└── scripts/package.sh   # Build distribution
-```
-
-**Total Python LOC:** ~18,800 lines (90 files)
 
 ## WHERE TO LOOK
 
-| Task | Location | Notes |
-|------|----------|-------|
-| Main driver logic | `src/autonomous/driver/competition_driver.py` | 1044L, main ROS node |
-| Control algorithms | `src/autonomous/modules/control/` | Pure functions, no ROS |
-| Perception modules | `src/autonomous/modules/perception/` | Cone detection, SLAM |
-| Tune driving params | `src/autonomous/config/params.yaml` | YAML config, runtime override |
-| Change simulator IP | `src/autonomous/.env` | `FSDS_HOST_IP=your.ip` |
-| Add Python deps | `src/autonomous/Dockerfile` | `pip3 install` section (msgpack-rpc first!) |
-| Run tests | Inside container | `python3 -m pytest tests/ -v` |
-| Start simulator | `src/simulator/fsds-linux/FSDS.sh` | UE4 binary, Vulkan/llvmpipe |
-
-## CODE MAP
-
-| Symbol | Type | Location | Role |
-|--------|------|----------|------|
-| `CompetitionDriver` | class | driver/competition_driver.py | Main ROS node, state machine |
-| `pure_pursuit_steering` | func | modules/control/pure_pursuit.py | Geometric steering calc |
-| `calculate_target_speed` | func | modules/control/speed.py | v = sqrt(a_lat_max / k) |
-| `find_cones_filtered` | func | modules/perception/cone_detector.py | Grid BFS clustering |
-| `SimpleSLAM` | class | modules/perception/slam.py | Occupancy grid mapping |
-| `Watchdog` | class | modules/utils/watchdog.py | Sensor timeout detection |
-| `DriveState` | enum | modules/utils/watchdog.py | TRACKING/DEGRADED/STOPPING |
-| `LapTimer` | class | modules/utils/lap_timer.py | Lap counting, timing |
-
-## KEY PARAMETERS (params.yaml)
-
-| Param | Default | Effect |
-|-------|---------|--------|
-| `max_speed` | 7.0 m/s | Speed limit |
-| `lookahead_base` | 3.5m | Pure Pursuit lookahead |
-| `control_loop_rate` | 20 Hz | Main loop frequency |
-| `lidar_stale_timeout` | 3.0s | Watchdog threshold |
-| `cone_grouping_threshold` | 0.2m | Grid cell size |
-| `max_lateral_accel` | 6.0 m/s² | Cornering limit |
-| `safety_margin` | 0.3m | Track edge buffer |
-| `single_side_offset` | 1.0m | One-sided cone offset |
-
-## ROS TOPICS
-
-| Topic | Type | Direction |
-|-------|------|-----------|
-| `/fsds/control_command` | ControlCommand | Pub |
-| `/fsds/lidar/Lidar1` | PointCloud2 | Sub |
-| `/fsds/testing_only/odom` | Odometry | Sub |
-| `/v2x/speed_limit` | Float32 | Sub |
-| `/lap/count` | Int32 | Pub |
+| Task                          | Location                           | Notes                                                      |
+| ----------------------------- | ---------------------------------- | ---------------------------------------------------------- |
+| Add/modify synced files       | `.github/sync.yml`                 | Defines file mappings and target repos                     |
+| Add a new sync target repo    | `.github/sync.yml` → `repos:`      | Add to both Group 1 and Group 2 (unless custom auto-merge) |
+| Reusable CI workflows         | `.github/workflows/_*.yml`         | `_` prefix = `workflow_call` only, not synced              |
+| Synced workflows              | `.github/workflows/{name}.yml`     | No `_` prefix = synced to downstream repos                 |
+| Issue templates               | `.github/ISSUE_TEMPLATE/`          | Bug report + feature request forms                         |
+| PR template                   | `.github/PULL_REQUEST_TEMPLATE.md` | What/Why/Kind/Changes/Testing/Checklist format             |
+| Standard labels               | `scripts/labels.yml`               | 17 labels: `type:*`, `priority:*`, `status:*`              |
+| Label sync to repos           | `scripts/sync-labels.sh`           | Uses `gh` CLI, run manually                                |
+| Contribution rules            | `CONTRIBUTING.md`                  | Trunk-based dev, conventional commits, review SLA          |
+| Security reports              | `SECURITY.md`                      | Email security@jclee.me, 48h response SLA                  |
+| GitHub profile page           | `profile/README.md`                | Rendered at github.com/qws941                              |
+| Editor formatting             | `.editorconfig`                    | Synced to all repos                                        |
+| Copilot context for this repo | `.github/copilot-instructions.md`  | SSoT-specific rules, NOT synced                            |
 
 ## CONVENTIONS
 
-- **No requirements.txt**: Python deps in Dockerfile only
-- **Windows/Linux IP required**: Set `FSDS_HOST_IP` in `.env` before running
-- **Thread safety**: `threading.Lock` for callback-main loop data
-- **Pure control/**: No ROS dependencies in `modules/control/`
-- **Type hints**: Required in all new code
-- **Pip order**: `msgpack-rpc-python` MUST install before `airsim`
+### SSoT Sync Model
 
-## ANTI-PATTERNS
+This repo is the canonical source. Changes propagate automatically:
 
-| Forbidden | Why |
-|-----------|-----|
-| `pip install` in container | Add to Dockerfile |
-| Hardcoded IPs | Use `.env` file |
-| Edit `fsds_docker/` | DEPRECATED - use `src/autonomous/` |
-| ROS in `modules/control/` | Keep pure for testing |
-| Missing `rospy.init_node` | Every driver needs it |
-| `queue_size > 1` for control | Real-time needs `queue_size=1` |
-| Generic `except Exception` | Catch specific exceptions |
-| `print()` for debug | Use `rospy.logdebug()` |
+- **Sync trigger**: Push to `master` on paths: `OWNERS`, `LICENSE`, `.editorconfig`, `AGENTS.md`, `.github/sync.yml`, `.github/workflows/codex-triage.yml`
+- **Sync engine**: `BetaHuhn/repo-file-sync-action` via `.github/workflows/sync-files.yml`
+- **Sync PRs**: Prefixed `chore: `, labeled `sync`, assigned to `qws941`
+
+**Synced files** (must remain generic, no repo-specific content):
+
+| File                               | Targets                                 |
+| ---------------------------------- | --------------------------------------- |
+| `OWNERS`                           | All 10 repos                            |
+| `LICENSE`                          | All 10 repos                            |
+| `.editorconfig`                    | All 10 repos                            |
+| `.github/labeler.yml`              | All 10 repos                            |
+| `.github/workflows/stale.yml`      | All 10 repos                            |
+| `.github/workflows/labeler.yml`    | All 10 repos                            |
+| `.github/workflows/auto-merge.yml` | 9 repos (excludes `terraform` — custom) |
+| `AGENTS.md`                        | All 10 repos                            |
+| `.github/workflows/codex-triage.yml`| All 10 repos                            |
+
+**NOT synced** (repo-specific by design):
+
+- `.github/dependabot.yml` — different ecosystems per repo
+- `.github/CODEOWNERS` — terraform has custom path rules
+- `.github/copilot-instructions.md` — repo-specific context
+
+### Sync Target Repos
+
+`blacklist`, `hycu_fsds`, `propose`, `qws941`, `resume`, `safetywallet`, `splunk`, `terraform`, `tmux`, `youtube`
+
+### Reusable Workflows
+
+Three `workflow_call` workflows prefixed with `_` (not synced, called via `uses:`):
+
+| Workflow                | Purpose                      | Key Inputs                                           |
+| ----------------------- | ---------------------------- | ---------------------------------------------------- |
+| `_ci-node.yml`          | Node.js CI (lint/type/test)  | `node-version`, `turbo`, `run-lint`, `run-test`      |
+| `_ci-python.yml`        | Python CI (ruff/mypy/pytest) | `python-version`, `run-mypy`, `run-test`, `src-dirs` |
+| `_deploy-cf-worker.yml` | Cloudflare Worker deploy     | `working-directory`, `environment`, `deploy-command` |
+
+Usage pattern in consuming repos:
+
+```yaml
+jobs:
+  ci:
+    uses: qws941/.github/.github/workflows/_ci-node.yml@master
+    with:
+      node-version: "20"
+    secrets: inherit
+```
+
+### GitHub Actions
+
+- SHA-pin all actions with `# vN` version comment suffix
+- Never use mutable tags (`@v4`) — always full commit SHA
+
+### Commit and PR Conventions
+
+- **Conventional Commits**: `type(scope): imperative summary` (≤72 chars, lowercase)
+- **Types**: `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `chore`, `perf`, `build`, `revert`
+- **Branch naming**: `type/description` (e.g., `feat/add-metrics-export`)
+- **PR size**: ~200 LOC max
+- **Merge policy**: Squash merge only. Merge commits disabled.
+- **Review SLA**: 24 hours. `nit:` prefix for non-blocking feedback.
+- **PR body format**: What / Why / Testing sections
+
+### Labels
+
+17 standard labels across all repos, defined in `scripts/labels.yml`:
+
+- `type:bug`, `type:feature`, `type:docs`, `type:refactor`, `type:ci`, `type:chore`, `type:security`, `type:test`, `type:infra`
+- `priority:critical`, `priority:high`, `priority:medium`, `priority:low`
+- `status:blocked`, `status:in-progress`, `status:needs-review`, `status:wontfix`, `status:duplicate`
+
+### Governance
+
+- **OWNERS** (Google3/K8s-style): Defines approvers and reviewers. Hierarchical. Synced.
+- **CODEOWNERS** (GitHub-native): Enforces required reviews. NOT synced (repo-specific).
+- Both set to `qws941` at root level.
+
+### Codex Integration
+
+`chatgpt-codex-connector` GitHub App is installed with access to all repositories.
+
+**Triggers:**
+
+| Trigger | Action | Context |
+| ------- | ------ | ------- |
+| `@codex review` in PR comment | Code review using AGENTS.md conventions | PR diff + repo context |
+| `@codex <task>` in PR comment | Execute arbitrary task (fix, refactor, test) | PR context |
+| `@codex` in issue comment | Investigate and propose fix, create PR | Issue context |
+| Automatic review (if enabled) | Review every new PR without @mention | Per-repo Codex setting |
+
+**Configuration:**
+
+- Codex reads `AGENTS.md` at repo root automatically — no additional config needed.
+- `## Review guidelines` section (below) customizes review behavior.
+- Enable automatic reviews per-repo at `chatgpt.com/codex/settings/code-review`.
+- AGENTS.md is synced to all 10 repos via `sync.yml` Group 1.
+
+## Review guidelines
+
+- Enforce conventional commit format in PR titles: `type(scope): summary`.
+- All GitHub Actions must be SHA-pinned with `# vN` version comment — flag any mutable tag (`@v4`).
+- Never approve PRs that add `as any`, `@ts-ignore`, `@ts-expect-error`, or empty `catch {}` blocks.
+- Never approve PRs that hardcode IPs, secrets, or credentials.
+- Synced files (OWNERS, LICENSE, .editorconfig, AGENTS.md, labeler.yml, workflow files) must remain generic — flag any repo-specific content.
+- PR size should be ~200 LOC max. Flag PRs exceeding 400 LOC.
+- Squash merge only — flag merge commits or rebase merges.
+- Trunk-based development — flag long-lived feature branches.
+- Review SLA context: non-blocking feedback uses `nit:` prefix.
+- For Terraform changes: verify no hardcoded IPs, use variables/env vars.
+- For workflow changes: verify SHA-pinned actions, correct `workflow_call` inputs, proper permissions scoping.
+
+## ANTI-PATTERNS (THIS PROJECT)
+
+- Never put repo-specific content in synced files — they propagate to all repos.
+- Never sync `dependabot.yml` or `CODEOWNERS` — they vary per repo.
+- Never use mutable action tags (`@v4`) — always SHA-pin with version comment.
+- Never hardcode IPs or secrets — use Terraform variables or env vars.
+- Never suppress type errors (`as any`, `@ts-ignore`) or delete failing tests.
+- Never use merge commits — squash merge only.
+- Never create long-lived feature branches — trunk-based development only.
+
+## UNIQUE STYLES
+
+- Config-only repo: no application code, no build system, no tests.
+- Dual governance: OWNERS (intent/policy) + CODEOWNERS (GitHub enforcement) coexist.
+- Reusable workflow naming: `_` prefix distinguishes callable workflows from synced workflows.
+- Sync groups: Group 1 (governance + workflows → all repos) vs Group 2 (auto-merge → excludes terraform).
+- GitHub auto-inherits: `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md` apply to all repos without syncing.
 
 ## COMMANDS
 
 ```bash
-# Start environment (from src/autonomous/)
-./start.sh
+# Sync labels to all repos (requires gh CLI auth)
+bash scripts/sync-labels.sh
 
-# Enter dev container
-docker exec -it fsds_autonomous bash
-
-# Run driver (inside container)
-python3 /root/catkin_ws/src/autonomous/driver/competition_driver.py
-
-# Run driver with lap limit
-python3 driver/competition_driver.py _target_laps:=1
-
-# Run tests
-python3 -m pytest tests/ -v
-
-# Build distribution package
-./scripts/package.sh
-
-# Record screen (1280x800)
-DISPLAY=:0 ffmpeg -f x11grab -video_size 1280x800 -framerate 30 -i :0 \
-  -c:v libx264 -preset ultrafast -crf 22 output.mp4
+# File sync happens automatically on push to master
+# Manual trigger available via workflow_dispatch on sync-files.yml
 ```
-
-## THREE CODEBASES
-
-| Directory | Status | Use |
-|-----------|--------|-----|
-| `src/autonomous/` | **ACTIVE** | All development here |
-| `fsds_docker/` | DEPRECATED | Legacy, do not modify |
-| `submission/` | AUTO-GENERATED | Built by package.sh |
-
-## STATE MACHINE
-
-```
-TRACKING ─(cones lost 3s)─> DEGRADED ─(cones lost 5s)─> STOPPING
-    ^                            │                          │
-    └──(cones detected)──────────┴───(sensor recovery)──────┘
-```
-
-## KNOWN ISSUES
-
-| Issue | Status | Notes |
-|-------|--------|-------|
-| docker-compose `service_started` | BUG | Should be `service_healthy` for fsds_bridge |
-| `cone_min_z: -1.0` | LOOSE | Tighten to `-0.3` for less ground noise |
-| `cone_min_points: 1` | LOOSE | Increase to `3` for noise filtering |
-| Cone knockdown | EXPECTED | FSDS PhysX physics - cones fall when hit |
-| `host.docker.internal` | LINUX FAIL | Use explicit IP on Linux |
 
 ## NOTES
 
-- FSDS simulator must be running BEFORE `start.sh`
-- ROS Bridge connects via port 41451
-- Container scripts auto-mounted - edit on host, run in container
-- All drivers follow 20Hz control loop pattern
-- Cone detection: Grid BFS clustering with z-filter [-0.5m, 0.5m]
-- TrainingMap is the only working map (CompetitionMap1-3 fail to load)
-- Collision box: 100cm(W) × 180cm(L) × 50cm(H) - larger than visual model
+- This is a personal account `.github` repo, not a GitHub Organization `.github` repo. GitHub still honors community health file inheritance for the account's repos.
+- `profile/README.md` renders as the GitHub profile page at `github.com/qws941`.
+- Reusable workflows are consumed via `uses: qws941/.github/.github/workflows/_ci-node.yml@master` — note the double `.github` path segment.
+- The `terraform` repo has custom auto-merge (risk-based) and custom CODEOWNERS, which is why those files are excluded from sync Group 2 / not synced respectively.
+- Secrets required: `GH_PAT` for sync-files workflow, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` for CF Worker deploy workflow.
+- `chatgpt-codex-connector` GitHub App installed with all-repo access. `@codex review` works in any repo PR. `@codex` works in issue comments to investigate and propose fixes.
+- AGENTS.md is synced to all downstream repos — Codex reads it automatically for review context in every repo.
